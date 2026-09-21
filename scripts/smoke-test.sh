@@ -212,16 +212,16 @@ period_b_json=$(curl --fail --silent -X POST   "http://localhost:$HTTP_PORT/api/
 
 period_b_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$period_b_json")
 
-adjacent_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-04-03&to=2027-04-08&bedrooms=2&sleeps=4&pricedOnly=true")
+adjacent_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-04-02&to=2027-04-09&bedrooms=2&sleeps=4&pricedOnly=true")
 
 ADJACENT_SEARCH_JSON="$adjacent_search_json" python3 - <<'PY'
 import json, os
 data = json.loads(os.environ["ADJACENT_SEARCH_JSON"])
 assert len(data) == 1, data
 price = data[0]["price"]
-assert price["nights"] == 5, price
-assert price["nightlySubtotalCents"] == 58000, price
-assert price["estimatedAmountCents"] == 63500, price
+assert price["nights"] == 7, price
+assert price["nightlySubtotalCents"] == 81000, price
+assert price["estimatedAmountCents"] == 86500, price
 print("Adjacent availability search passed")
 PY
 
@@ -231,9 +231,9 @@ test "$overlap_status" = "409"
 
 curl --fail --silent -X PUT   "http://localhost:$HTTP_PORT/api/availability/$period_b_id"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"from":"2027-04-05","to":"2027-04-10","nightlyPriceCents":null}'   >/dev/null
 
-all_prices_missing_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-04-03&to=2027-04-08&bedrooms=2&sleeps=4")
+all_prices_missing_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-04-02&to=2027-04-09&bedrooms=2&sleeps=4")
 
-priced_only_missing_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-04-03&to=2027-04-08&bedrooms=2&sleeps=4&pricedOnly=true")
+priced_only_missing_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-04-02&to=2027-04-09&bedrooms=2&sleeps=4&pricedOnly=true")
 
 ALL_PRICES_MISSING_JSON="$all_prices_missing_json" PRICED_ONLY_MISSING_JSON="$priced_only_missing_json" python3 - <<'PY'
 import json, os
