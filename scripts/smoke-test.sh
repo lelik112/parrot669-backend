@@ -168,8 +168,8 @@ assert result["price"]["nights"] == 10, result
 assert result["price"]["nightlySubtotalCents"] == 100000, result
 assert result["price"]["cleaningFeeCents"] == 5500, result
 assert result["price"]["estimatedAmountCents"] == 105500, result
-assert result["availableFrom"] == "2027-01-05", result
-assert result["availableTo"] == "2027-03-05", result
+assert result["availableFrom"] == "2027-01-10", result
+assert result["availableTo"] == "2027-01-20", result
 assert result["links"][0]["id"] == listing_id, result
 
 assert len(updated_boundary) == 1, updated_boundary
