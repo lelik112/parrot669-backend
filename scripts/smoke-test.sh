@@ -11,12 +11,38 @@ set -euo pipefail
 export DATABASE_URL DATABASE_USER DATABASE_PASSWORD PARROT_ADMIN_TOKEN HTTP_PORT APP_ENV
 
 LOG_FILE="${TMPDIR:-/tmp}/parrot669-smoke.log"
+ICAL_DIR=$(mktemp -d)
+mkdir -p "$ICAL_DIR/calendar/ical"
+cat >"$ICAL_DIR/calendar/ical/123456789.ics" <<'ICS'
+BEGIN:VCALENDAR
+PRODID:-//Airbnb Inc//Hosting Calendar 1.0//EN
+VERSION:2.0
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:20270115
+DTEND;VALUE=DATE:20270118
+SUMMARY:Reserved
+UID:reservation-ci@airbnb.com
+DESCRIPTION:Reservation URL: https://www.airbnb.com/hosting/reservations/details/CI
+END:VEVENT
+BEGIN:VEVENT
+DTSTART;VALUE=DATE:20270122
+DTEND;VALUE=DATE:20270125
+SUMMARY:Airbnb (Not available)
+UID:not-available-ci@airbnb.com
+END:VEVENT
+END:VCALENDAR
+ICS
+
+python3 -m http.server 18080 --bind 127.0.0.1 --directory "$ICAL_DIR" >/dev/null 2>&1 &
+ICAL_SERVER_PID=$!
 
 sbt -batch run >"$LOG_FILE" 2>&1 &
 SERVER_PID=$!
 
 cleanup() {
   kill "$SERVER_PID" 2>/dev/null || true
+  kill "$ICAL_SERVER_PID" 2>/dev/null || true
+  rm -rf "$ICAL_DIR"
   pkill -f 'com.parrot669.Main' 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -181,6 +207,51 @@ assert too_short_stay == [], too_short_stay
 assert len(minimum_stay) == 1, minimum_stay
 
 print("Updated availability search passed")
+PY
+
+calendar_json=$(curl --fail --silent -X POST   "http://localhost:$HTTP_PORT/api/properties/$property_id/calendars"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"provider":"airbnb","icalUrl":"http://127.0.0.1:18080/calendar/ical/123456789.ics?t=ci-secret"}')
+
+calendar_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$calendar_json")
+
+CALENDAR_JSON="$calendar_json" python3 - <<'PY'
+import json, os
+data = json.loads(os.environ["CALENDAR_JSON"])
+assert data["provider"] == "airbnb", data
+assert data["status"] == "connected", data
+assert len(data["reservationBlocks"]) == 1, data
+assert data["reservationBlocks"][0]["from"] == "2027-01-15", data
+assert data["reservationBlocks"][0]["to"] == "2027-01-18", data
+assert data["platformUnavailableCount"] == 1, data
+assert data["unknownCount"] == 0, data
+assert "icalUrl" not in data, data
+print("Airbnb iCal connection passed")
+PY
+
+reserved_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
+
+platform_unavailable_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-20&to=2027-01-30&bedrooms=2&sleeps=4")
+
+RESERVED_SEARCH_JSON="$reserved_search_json" PLATFORM_UNAVAILABLE_SEARCH_JSON="$platform_unavailable_search_json" python3 - <<'PY'
+import json, os
+reserved = json.loads(os.environ["RESERVED_SEARCH_JSON"])
+platform_unavailable = json.loads(os.environ["PLATFORM_UNAVAILABLE_SEARCH_JSON"])
+assert reserved == [], reserved
+assert len(platform_unavailable) == 1, platform_unavailable
+print("Airbnb reservation blocking semantics passed")
+PY
+
+calendar_dashboard_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/profiles/$profile_id/dashboard"   -H "X-Parrot-Token: $edit_token")
+
+CALENDAR_DASHBOARD_JSON="$calendar_dashboard_json" python3 - "$calendar_id" <<'PY'
+import json, os, sys
+calendar_id = sys.argv[1]
+data = json.loads(os.environ["CALENDAR_DASHBOARD_JSON"])
+calendars = data["properties"][0]["calendars"]
+assert len(calendars) == 1, calendars
+assert calendars[0]["id"] == calendar_id, calendars
+assert calendars[0]["status"] == "connected", calendars
+assert len(calendars[0]["reservationBlocks"]) == 1, calendars
+print("Calendar dashboard passed")
 PY
 
 wrong_delete_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   -X DELETE "http://localhost:$HTTP_PORT/api/availability/$availability_id"   -H 'X-Parrot-Token: definitely-wrong-token')
