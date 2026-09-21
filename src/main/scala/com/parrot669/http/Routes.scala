@@ -198,6 +198,35 @@ final class Routes[F[_]: Async](service: ParrotService[F], adminToken: String) e
           }
       }
 
+    case request @ POST -> Root / "api" / "properties" / propertyIdRaw / "calendars" =>
+      parseUuid(propertyIdRaw) match {
+        case Left(error) => respondError(error)
+        case Right(propertyId) =>
+          decode[ConnectExternalCalendarRequest](request) { body =>
+            val token = header(request, "X-Parrot-Token")
+            service.connectExternalCalendar(propertyId, token, body).flatMap(result => respond(result, created = true))
+          }
+      }
+
+    case request @ POST -> Root / "api" / "calendars" / calendarIdRaw / "sync" =>
+      parseUuid(calendarIdRaw) match {
+        case Left(error) => respondError(error)
+        case Right(calendarId) =>
+          val token = header(request, "X-Parrot-Token")
+          service.syncExternalCalendar(calendarId, token).flatMap(result => respond(result))
+      }
+
+    case request @ DELETE -> Root / "api" / "calendars" / calendarIdRaw =>
+      parseUuid(calendarIdRaw) match {
+        case Left(error) => respondError(error)
+        case Right(calendarId) =>
+          val token = header(request, "X-Parrot-Token")
+          service.deleteExternalCalendar(calendarId, token).flatMap {
+            case Right(_) => NoContent()
+            case Left(error) => respondError(error)
+          }
+      }
+
     case request @ POST -> Root / "api" / "listings" / listingIdRaw / "challenges" =>
       parseUuid(listingIdRaw) match {
         case Left(error) => respondError(error)

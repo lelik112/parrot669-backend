@@ -55,6 +55,29 @@ final case class AvailablePropertyRecord(
     nightlyTotalCents: Option[Long]
 )
 
+final case class ExternalCalendarRecord(
+    id: UUID,
+    propertyId: UUID,
+    provider: String,
+    icalUrl: String,
+    status: String,
+    lastSyncedAt: Option[OffsetDateTime],
+    lastSuccessAt: Option[OffsetDateTime],
+    lastError: Option[String],
+    createdAt: OffsetDateTime,
+    updatedAt: OffsetDateTime
+)
+
+final case class ExternalCalendarEventRecord(
+    id: UUID,
+    calendarId: UUID,
+    externalUid: String,
+    kind: String,
+    dateFrom: LocalDate,
+    dateTo: LocalDate,
+    observedAt: OffsetDateTime
+)
+
 final case class ChallengeRecord(
     id: UUID,
     listingId: UUID,
@@ -84,6 +107,7 @@ final case class CreatePropertyRequest(title: String, city: String, bedrooms: In
 final case class AddListingRequest(platform: String, externalId: String, cleaningFeeCents: Option[Long])
 final case class UpdateListingRequest(cleaningFeeCents: Option[Long])
 final case class AddAvailabilityRequest(from: String, to: String, nightlyPriceCents: Option[Long])
+final case class ConnectExternalCalendarRequest(provider: String, icalUrl: String)
 
 final case class PublicProfile(
     parrotId: String,
@@ -133,6 +157,24 @@ final case class PublicProfilePage(
     verifications: List[PublicVerification]
 )
 
+final case class CalendarEventView(
+    kind: String,
+    from: String,
+    to: String
+)
+
+final case class ExternalCalendarView(
+    id: String,
+    provider: String,
+    status: String,
+    lastSyncedAt: Option[String],
+    lastSuccessAt: Option[String],
+    lastError: Option[String],
+    reservationBlocks: List[CalendarEventView],
+    platformUnavailableCount: Int,
+    unknownCount: Int
+)
+
 final case class HostProperty(
     id: String,
     title: String,
@@ -142,7 +184,8 @@ final case class HostProperty(
     minStayDays: Int,
     createdAt: String,
     listings: List[PublicListing],
-    availability: List[AvailabilityCreated]
+    availability: List[AvailabilityCreated],
+    calendars: List[ExternalCalendarView]
 )
 
 final case class HostDashboard(

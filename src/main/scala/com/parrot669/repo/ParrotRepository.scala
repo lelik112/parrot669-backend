@@ -189,7 +189,16 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
           c.sleeps,
           c.min_stay_days,
           n.night,
-          count(a.id) > 0 as is_available,
+          count(a.id) > 0
+          and not exists (
+            select 1
+            from external_calendar_events e
+            join external_calendars ec on ec.id = e.calendar_id
+            where ec.property_id = c.id
+              and e.kind = 'reservation'
+              and e.date_from <= n.night
+              and e.date_to > n.night
+          ) as is_available,
           case
             when count(a.id) > 0
              and count(*) filter (where a.nightly_price_cents is null) = 0
@@ -278,6 +287,130 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
 
   def deleteListing(listingId: UUID): F[Boolean] =
     sql"delete from external_listings where id = $listingId"
+      .update
+      .run
+      .map(_ == 1)
+      .transact(xa)
+
+  def upsertExternalCalendar(calendar: ExternalCalendarRecord): F[ExternalCalendarRecord] = {
+    val tx = for {
+      saved <- sql"""
+        insert into external_calendars (
+          id, property_id, provider, ical_url, status,
+          last_synced_at, last_success_at, last_error, created_at, updated_at
+        ) values (
+          ${calendar.id}, ${calendar.propertyId}, ${calendar.provider}, ${calendar.icalUrl}, ${calendar.status},
+          ${calendar.lastSyncedAt}, ${calendar.lastSuccessAt}, ${calendar.lastError},
+          ${calendar.createdAt}, ${calendar.updatedAt}
+        )
+        on conflict (property_id, provider) do update
+        set ical_url = excluded.ical_url,
+            status = 'pending',
+            last_synced_at = null,
+            last_success_at = null,
+            last_error = null,
+            updated_at = excluded.updated_at
+        returning id, property_id, provider, ical_url, status,
+                  last_synced_at, last_success_at, last_error, created_at, updated_at
+      """.query[ExternalCalendarRecord].unique
+      _ <- sql"delete from external_calendar_events where calendar_id = ${saved.id}".update.run
+    } yield saved
+
+    tx.transact(xa)
+  }
+
+  def externalCalendar(calendarId: UUID): F[Option[ExternalCalendarRecord]] =
+    sql"""
+      select id, property_id, provider, ical_url, status,
+             last_synced_at, last_success_at, last_error, created_at, updated_at
+      from external_calendars
+      where id = $calendarId
+    """.query[ExternalCalendarRecord].option.transact(xa)
+
+  def externalCalendarsForProperty(propertyId: UUID): F[List[ExternalCalendarRecord]] =
+    sql"""
+      select id, property_id, provider, ical_url, status,
+             last_synced_at, last_success_at, last_error, created_at, updated_at
+      from external_calendars
+      where property_id = $propertyId
+      order by created_at asc
+    """.query[ExternalCalendarRecord].to[List].transact(xa)
+
+  def allExternalCalendars: F[List[ExternalCalendarRecord]] =
+    sql"""
+      select id, property_id, provider, ical_url, status,
+             last_synced_at, last_success_at, last_error, created_at, updated_at
+      from external_calendars
+      order by updated_at asc
+    """.query[ExternalCalendarRecord].to[List].transact(xa)
+
+  def externalCalendarEvents(calendarId: UUID): F[List[ExternalCalendarEventRecord]] =
+    sql"""
+      select id, calendar_id, external_uid, kind, date_from, date_to, observed_at
+      from external_calendar_events
+      where calendar_id = $calendarId
+      order by date_from asc, date_to asc
+    """.query[ExternalCalendarEventRecord].to[List].transact(xa)
+
+  def externalCalendarOwnerProfileId(calendarId: UUID): F[Option[UUID]] =
+    sql"""
+      select p.profile_id
+      from external_calendars c
+      join properties p on p.id = c.property_id
+      where c.id = $calendarId
+    """.query[UUID].option.transact(xa)
+
+  def replaceExternalCalendarEvents(
+      calendarId: UUID,
+      events: List[ExternalCalendarEventRecord],
+      syncedAt: OffsetDateTime
+  ): F[ExternalCalendarRecord] = {
+    val tx = for {
+      _ <- sql"delete from external_calendar_events where calendar_id = $calendarId".update.run
+      _ <- events.traverse_ { event =>
+        sql"""
+          insert into external_calendar_events (
+            id, calendar_id, external_uid, kind, date_from, date_to, observed_at
+          ) values (
+            ${event.id}, ${event.calendarId}, ${event.externalUid}, ${event.kind},
+            ${event.dateFrom}, ${event.dateTo}, ${event.observedAt}
+          )
+        """.update.run.void
+      }
+      saved <- sql"""
+        update external_calendars
+        set status = 'connected',
+            last_synced_at = $syncedAt,
+            last_success_at = $syncedAt,
+            last_error = null,
+            updated_at = $syncedAt
+        where id = $calendarId
+        returning id, property_id, provider, ical_url, status,
+                  last_synced_at, last_success_at, last_error, created_at, updated_at
+      """.query[ExternalCalendarRecord].unique
+    } yield saved
+
+    tx.transact(xa)
+  }
+
+  def markExternalCalendarSyncError(
+      calendarId: UUID,
+      attemptedAt: OffsetDateTime,
+      error: String
+  ): F[ExternalCalendarRecord] =
+    sql"""
+      update external_calendars
+      set status = 'error',
+          last_synced_at = $attemptedAt,
+          last_error = $error,
+          updated_at = $attemptedAt
+      where id = $calendarId
+      returning id, property_id, provider, ical_url, status,
+                last_synced_at, last_success_at, last_error, created_at, updated_at
+    """.query[ExternalCalendarRecord].unique.transact(xa)
+
+  def deleteExternalCalendar(calendarId: UUID): F[Boolean] =
+    sql"delete from external_calendars where id = $calendarId"
       .update
       .run
       .map(_ == 1)

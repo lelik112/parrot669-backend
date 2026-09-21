@@ -1,15 +1,27 @@
 package com.parrot669
 
 import cats.effect.{IO, IOApp, Resource}
+import cats.syntax.all._
 import com.comcast.ip4s.{Host, Port}
 import com.parrot669.config.AppConfig
 import com.parrot669.db.Database
 import com.parrot669.http.Routes
+import com.parrot669.integration.HttpIcalFetcher
 import com.parrot669.repo.ParrotRepository
 import com.parrot669.service.ParrotService
 import org.http4s.ember.server.EmberServerBuilder
+import org.slf4j.LoggerFactory
+
+import scala.concurrent.duration._
 
 object Main extends IOApp.Simple {
+  private val logger = LoggerFactory.getLogger("com.parrot669.calendar-sync")
+
+  private def calendarSyncLoop(service: ParrotService[IO]): IO[Unit] =
+    (service.syncAllExternalCalendars.handleErrorWith(error =>
+      IO(logger.warn("External calendar sync cycle failed", error))
+    ) *> IO.sleep(1.hour)).foreverM
+
   override def run: IO[Unit] =
     AppConfig.load.flatMap { config =>
       val resources = for {
@@ -22,7 +34,8 @@ object Main extends IOApp.Simple {
           new IllegalArgumentException(s"invalid HTTP_PORT: ${config.httpPort}")
         ))
         repo = new ParrotRepository[IO](xa)
-        service = new ParrotService[IO](repo)
+        icalFetcher = new HttpIcalFetcher[IO](allowLocalhost = config.environment == "test")
+        service = new ParrotService[IO](repo, icalFetcher)
         routes = new Routes[IO](service, config.adminToken).routes
         server <- EmberServerBuilder
           .default[IO]
@@ -30,6 +43,7 @@ object Main extends IOApp.Simple {
           .withPort(port)
           .withHttpApp(routes.orNotFound)
           .build
+        _ <- Resource.make(calendarSyncLoop(service).start)(_.cancel)
       } yield server
 
       resources.useForever
