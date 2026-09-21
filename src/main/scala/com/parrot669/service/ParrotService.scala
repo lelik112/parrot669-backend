@@ -100,7 +100,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
     for {
       from <- parseDate(req.from, "from")
       to <- parseDate(req.to, "to")
-      _ <- Either.cond(!to.isBefore(from), (), Invalid("to must be on or after from"))
+      _ <- Either.cond(to.isAfter(from), (), Invalid("to must be after from; checkout date is exclusive"))
     } yield (from, to)
 
   private def validateListing(req: AddListingRequest): Either[ServiceError, Unit] = {
@@ -333,10 +333,10 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
         _ <- Either.cond(normalized(city).equalsIgnoreCase("Barcelona"), (), Invalid("only Barcelona is supported right now"))
         from <- parseDate(fromRaw, "from")
         to <- parseDate(toRaw, "to")
-        _ <- Either.cond(!to.isBefore(from), (), Invalid("to must be on or after from"))
+        _ <- Either.cond(to.isAfter(from), (), Invalid("to must be after from; checkout date is exclusive"))
         _ <- Either.cond(bedrooms >= 1 && bedrooms <= 20, (), Invalid("bedrooms must be between 1 and 20"))
         _ <- Either.cond(sleeps >= 1 && sleeps <= 40, (), Invalid("sleeps must be between 1 and 40"))
-        stayDays = math.max(1, ChronoUnit.DAYS.between(from, to).toInt)
+        stayDays = ChronoUnit.DAYS.between(from, to).toInt
       } yield (from, to, stayDays)
 
     validated match {
@@ -347,6 +347,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
             repo.listingsForProperty(item.propertyId).map { listings =>
               SearchResult(
                 propertyId = item.propertyId.toString,
+                propertyTitle = item.propertyTitle,
                 ownerDisplayName = item.ownerDisplayName,
                 city = item.city,
                 bedrooms = item.bedrooms,
@@ -491,6 +492,43 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
           expiresAt = saved.expiresAt.map(_.toString)
         )
       }
+
+  def hostDashboard(
+      profileId: UUID,
+      editToken: String
+  ): F[Either[ServiceError, HostDashboard]] =
+    authorize(profileId, editToken).flatMap {
+      case Left(error) => fail[HostDashboard](error)
+      case Right(_) =>
+        (repo.findProfile(profileId), repo.propertiesForProfile(profileId), repo.listingsForProfile(profileId)).tupled.flatMap {
+          case (None, _, _) => fail[HostDashboard](NotFound("profile not found"))
+          case (Some(profile), properties, listings) =>
+            properties.traverse { property =>
+              repo.availabilityForProperty(property.id).map { availability =>
+                HostProperty(
+                  id = property.id.toString,
+                  title = property.title,
+                  city = property.city,
+                  bedrooms = property.bedrooms,
+                  sleeps = property.sleeps,
+                  minStayDays = property.minStayDays,
+                  createdAt = property.createdAt.toString,
+                  listings = listings.filter(_.propertyId == property.id).map(toPublicListing),
+                  availability = availability.map(toAvailabilityCreated)
+                )
+              }
+            }.map { hostProperties =>
+              HostDashboard(
+                profile = PublicProfile(
+                  parrotId = profile.parrotId,
+                  displayName = profile.displayName,
+                  createdAt = profile.createdAt.toString
+                ),
+                properties = hostProperties
+              ).asRight[ServiceError]
+            }
+        }
+    }
 
   def publicProfile(parrotId: String): F[Either[ServiceError, PublicProfilePage]] =
     repo.findProfileByParrotId(normalized(parrotId)).flatMap {

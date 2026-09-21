@@ -42,6 +42,7 @@ final case class AvailabilityRecord(
 
 final case class AvailablePropertyRecord(
     propertyId: UUID,
+    propertyTitle: String,
     ownerDisplayName: String,
     city: String,
     bedrooms: Int,
@@ -127,6 +128,23 @@ final case class PublicProfilePage(
     verifications: List[PublicVerification]
 )
 
+final case class HostProperty(
+    id: String,
+    title: String,
+    city: String,
+    bedrooms: Int,
+    sleeps: Int,
+    minStayDays: Int,
+    createdAt: String,
+    listings: List[PublicListing],
+    availability: List[AvailabilityCreated]
+)
+
+final case class HostDashboard(
+    profile: PublicProfile,
+    properties: List[HostProperty]
+)
+
 final case class PropertyCreated(
     id: String,
     title: String,
@@ -156,6 +174,7 @@ final case class AvailabilityCreated(
 
 final case class SearchResult(
     propertyId: String,
+    propertyTitle: String,
     ownerDisplayName: String,
     city: String,
     bedrooms: Int,

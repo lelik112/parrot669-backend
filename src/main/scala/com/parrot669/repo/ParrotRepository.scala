@@ -117,7 +117,7 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
   ): F[List[AvailablePropertyRecord]] =
     sql"""
       select distinct on (p.id)
-        p.id, pr.display_name, p.city, p.bedrooms, p.sleeps, p.min_stay_days, a.date_from, a.date_to
+        p.id, p.title, pr.display_name, p.city, p.bedrooms, p.sleeps, p.min_stay_days, a.date_from, a.date_to
       from properties p
       join profiles pr on pr.id = p.profile_id
       join availability_periods a on a.property_id = p.id

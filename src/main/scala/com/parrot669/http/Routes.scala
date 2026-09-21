@@ -69,6 +69,14 @@ final class Routes[F[_]: Async](service: ParrotService[F], adminToken: String) e
         service.createProfile(body).flatMap(result => respond(result, created = true))
       }
 
+    case request @ GET -> Root / "api" / "profiles" / profileIdRaw / "dashboard" =>
+      parseUuid(profileIdRaw) match {
+        case Left(error) => respondError(error)
+        case Right(profileId) =>
+          val token = header(request, "X-Parrot-Token")
+          service.hostDashboard(profileId, token).flatMap(result => respond(result))
+      }
+
     case request @ POST -> Root / "api" / "profiles" / profileIdRaw / "properties" =>
       parseUuid(profileIdRaw) match {
         case Left(error) => respondError(error)

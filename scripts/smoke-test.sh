@@ -61,6 +61,22 @@ availability_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])
 
 availability_list_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/properties/$property_id/availability"   -H "X-Parrot-Token: $edit_token")
 
+dashboard_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/profiles/$profile_id/dashboard"   -H "X-Parrot-Token: $edit_token")
+
+DASHBOARD_JSON="$dashboard_json" python3 - "$property_id" "$listing_id" "$availability_id" <<'PY'
+import json, os, sys
+property_id, listing_id, availability_id = sys.argv[1:4]
+data = json.loads(os.environ["DASHBOARD_JSON"])
+assert data["profile"]["displayName"] == "CI Host", data
+assert len(data["properties"]) == 1, data
+p = data["properties"][0]
+assert p["id"] == property_id, p
+assert p["title"] == "CI Apartment", p
+assert p["listings"][0]["id"] == listing_id, p
+assert p["availability"][0]["id"] == availability_id, p
+print("Host dashboard passed")
+PY
+
 AVAILABILITY_LIST_JSON="$availability_list_json" python3 - "$availability_id" <<'PY'
 import json
 import os
@@ -110,6 +126,10 @@ too_short_stay_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/se
 
 minimum_stay_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-17&bedrooms=2&sleeps=4")
 
+zero_night_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-23&to=2027-01-23&bedrooms=2&sleeps=4")
+
+test "$zero_night_status" = "400"
+
 SEARCH_JSON="$search_json" UPDATED_BOUNDARY_JSON="$updated_boundary_json" OLD_LEFT_BOUNDARY_JSON="$old_left_boundary_json" OUTSIDE_RIGHT_JSON="$outside_right_json" TOO_MANY_BEDROOMS_JSON="$too_many_bedrooms_json" TOO_MANY_GUESTS_JSON="$too_many_guests_json" TOO_SHORT_STAY_JSON="$too_short_stay_json" MINIMUM_STAY_JSON="$minimum_stay_json" python3 - "$property_id" "$listing_id" <<'PY'
 import json
 import os
@@ -130,6 +150,7 @@ minimum_stay = json.loads(os.environ["MINIMUM_STAY_JSON"])
 assert len(results) == 1, results
 result = results[0]
 assert result["propertyId"] == property_id, result
+assert result["propertyTitle"] == "CI Apartment", result
 assert result["ownerDisplayName"] == "CI Host", result
 assert result["city"] == "Barcelona", result
 assert result["bedrooms"] == 2, result
