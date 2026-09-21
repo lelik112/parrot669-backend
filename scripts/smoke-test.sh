@@ -51,11 +51,11 @@ property_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/
 
 property_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$property_json")
 
-listing_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/properties/$property_id/listings"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"platform":"airbnb","externalId":"123456789"}')
+listing_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/properties/$property_id/listings"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"platform":"airbnb","externalId":"123456789","cleaningFeeCents":5500}')
 
 listing_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$listing_json")
 
-availability_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/properties/$property_id/availability"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"from":"2027-01-01","to":"2027-02-28"}')
+availability_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/properties/$property_id/availability"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"from":"2027-01-01","to":"2027-02-28","nightlyPriceCents":10000}')
 
 availability_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$availability_json")
 
@@ -73,7 +73,9 @@ p = data["properties"][0]
 assert p["id"] == property_id, p
 assert p["title"] == "CI Apartment", p
 assert p["listings"][0]["id"] == listing_id, p
+assert p["listings"][0]["cleaningFeeCents"] == 5500, p
 assert p["availability"][0]["id"] == availability_id, p
+assert p["availability"][0]["nightlyPriceCents"] == 10000, p
 print("Host dashboard passed")
 PY
 
@@ -88,14 +90,15 @@ assert len(data) == 1, data
 assert data[0]["id"] == availability_id, data
 assert data[0]["from"] == "2027-01-01", data
 assert data[0]["to"] == "2027-02-28", data
+assert data[0]["nightlyPriceCents"] == 10000, data
 print("Availability listing passed")
 PY
 
-wrong_update_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   -X PUT "http://localhost:$HTTP_PORT/api/availability/$availability_id"   -H 'content-type: application/json'   -H 'X-Parrot-Token: definitely-wrong-token'   -d '{"from":"2027-01-05","to":"2027-03-05"}')
+wrong_update_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   -X PUT "http://localhost:$HTTP_PORT/api/availability/$availability_id"   -H 'content-type: application/json'   -H 'X-Parrot-Token: definitely-wrong-token'   -d '{"from":"2027-01-05","to":"2027-03-05","nightlyPriceCents":10000}')
 
 test "$wrong_update_status" = "401"
 
-updated_availability_json=$(curl --fail --silent   -X PUT "http://localhost:$HTTP_PORT/api/availability/$availability_id"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"from":"2027-01-05","to":"2027-03-05"}')
+updated_availability_json=$(curl --fail --silent   -X PUT "http://localhost:$HTTP_PORT/api/availability/$availability_id"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"from":"2027-01-05","to":"2027-03-05","nightlyPriceCents":10000}')
 
 UPDATED_AVAILABILITY_JSON="$updated_availability_json" python3 - "$availability_id" <<'PY'
 import json
@@ -107,6 +110,7 @@ data = json.loads(os.environ["UPDATED_AVAILABILITY_JSON"])
 assert data["id"] == availability_id, data
 assert data["from"] == "2027-01-05", data
 assert data["to"] == "2027-03-05", data
+assert data["nightlyPriceCents"] == 10000, data
 print("Availability update passed")
 PY
 
@@ -158,6 +162,12 @@ assert result["sleeps"] == 5, result
 assert result["minStayDays"] == 7, result
 assert result["links"][0]["externalId"] == "123456789", result
 assert result["links"][0]["url"] == "https://www.airbnb.com/rooms/123456789", result
+assert result["links"][0]["cleaningFeeCents"] == 5500, result
+assert result["price"]["currency"] == "EUR", result
+assert result["price"]["nights"] == 10, result
+assert result["price"]["nightlySubtotalCents"] == 100000, result
+assert result["price"]["cleaningFeeCents"] == 5500, result
+assert result["price"]["estimatedAmountCents"] == 105500, result
 assert result["availableFrom"] == "2027-01-05", result
 assert result["availableTo"] == "2027-03-05", result
 assert result["links"][0]["id"] == listing_id, result
@@ -192,6 +202,47 @@ search = json.loads(os.environ["AFTER_DELETE_SEARCH_JSON"])
 assert periods == [], periods
 assert search == [], search
 print("Availability deletion passed")
+PY
+
+period_a_json=$(curl --fail --silent -X POST   "http://localhost:$HTTP_PORT/api/properties/$property_id/availability"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"from":"2027-04-01","to":"2027-04-05","nightlyPriceCents":11000}')
+
+period_a_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$period_a_json")
+
+period_b_json=$(curl --fail --silent -X POST   "http://localhost:$HTTP_PORT/api/properties/$property_id/availability"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"from":"2027-04-05","to":"2027-04-10","nightlyPriceCents":12000}')
+
+period_b_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$period_b_json")
+
+adjacent_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-04-03&to=2027-04-08&bedrooms=2&sleeps=4&pricedOnly=true")
+
+ADJACENT_SEARCH_JSON="$adjacent_search_json" python3 - <<'PY'
+import json, os
+data = json.loads(os.environ["ADJACENT_SEARCH_JSON"])
+assert len(data) == 1, data
+price = data[0]["price"]
+assert price["nights"] == 5, price
+assert price["nightlySubtotalCents"] == 58000, price
+assert price["estimatedAmountCents"] == 63500, price
+print("Adjacent availability search passed")
+PY
+
+overlap_status=$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST   "http://localhost:$HTTP_PORT/api/properties/$property_id/availability"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"from":"2027-04-04","to":"2027-04-06","nightlyPriceCents":9999}')
+
+test "$overlap_status" = "409"
+
+curl --fail --silent -X PUT   "http://localhost:$HTTP_PORT/api/availability/$period_b_id"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"from":"2027-04-05","to":"2027-04-10","nightlyPriceCents":null}'   >/dev/null
+
+all_prices_missing_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-04-03&to=2027-04-08&bedrooms=2&sleeps=4")
+
+priced_only_missing_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-04-03&to=2027-04-08&bedrooms=2&sleeps=4&pricedOnly=true")
+
+ALL_PRICES_MISSING_JSON="$all_prices_missing_json" PRICED_ONLY_MISSING_JSON="$priced_only_missing_json" python3 - <<'PY'
+import json, os
+all_results = json.loads(os.environ["ALL_PRICES_MISSING_JSON"])
+priced = json.loads(os.environ["PRICED_ONLY_MISSING_JSON"])
+assert len(all_results) == 1, all_results
+assert all_results[0]["price"] is None, all_results
+assert priced == [], priced
+print("Incomplete price behavior passed")
 PY
 
 challenge_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/listings/$listing_id/challenges"   -H "X-Parrot-Token: $edit_token")
@@ -236,6 +287,15 @@ data = json.loads(os.environ["VERIFICATION_JSON"])
 assert data["claim"] == "controls_listing", data
 assert data["method"] == "calendar_challenge", data
 print("Verification response passed")
+PY
+
+updated_listing_json=$(curl --fail --silent -X PUT   "http://localhost:$HTTP_PORT/api/listings/$listing_id"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"cleaningFeeCents":6500}')
+
+UPDATED_LISTING_JSON="$updated_listing_json" python3 - <<'PY'
+import json, os
+data = json.loads(os.environ["UPDATED_LISTING_JSON"])
+assert data["cleaningFeeCents"] == 6500, data
+print("Listing cleaning fee update passed")
 PY
 
 wrong_listing_delete_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   -X DELETE "http://localhost:$HTTP_PORT/api/listings/$listing_id"   -H 'X-Parrot-Token: definitely-wrong-token')

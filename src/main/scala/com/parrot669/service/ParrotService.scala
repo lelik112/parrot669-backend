@@ -96,12 +96,20 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
 
   private def validateAvailability(
       req: AddAvailabilityRequest
-  ): Either[ServiceError, (LocalDate, LocalDate)] =
+  ): Either[ServiceError, (LocalDate, LocalDate, Option[Long])] =
     for {
       from <- parseDate(req.from, "from")
       to <- parseDate(req.to, "to")
       _ <- Either.cond(to.isAfter(from), (), Invalid("to must be after from; checkout date is exclusive"))
-    } yield (from, to)
+      _ <- Either.cond(
+        req.nightlyPriceCents.forall(price => price > 0 && price <= 10000000L),
+        (),
+        Invalid("nightlyPriceCents must be between 1 and 10000000 when provided")
+      )
+    } yield (from, to, req.nightlyPriceCents)
+
+  private def validCleaningFee(value: Option[Long]): Boolean =
+    value.forall(fee => fee >= 0 && fee <= 10000000L)
 
   private def validateListing(req: AddListingRequest): Either[ServiceError, Unit] = {
     val platform = normalized(req.platform).toLowerCase
@@ -109,6 +117,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
 
     if (platform != "airbnb") Left(Invalid("only airbnb is supported in v0"))
     else if (!externalId.matches("[0-9]{1,32}")) Left(Invalid("externalId must be an Airbnb numeric listing id"))
+    else if (!validCleaningFee(req.cleaningFeeCents)) Left(Invalid("cleaningFeeCents must be between 0 and 10000000 when provided"))
     else Right(())
   }
 
@@ -131,6 +140,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
       platform = listing.platform,
       externalId = listing.externalId,
       url = listing.url,
+      cleaningFeeCents = listing.cleaningFeeCents,
       createdAt = listing.createdAt.toString
     )
 
@@ -227,32 +237,31 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
   ): F[Either[ServiceError, AvailabilityCreated]] =
     validateAvailability(req) match {
       case Left(error) => fail[AvailabilityCreated](error)
-      case Right((dateFrom, dateTo)) =>
+      case Right((dateFrom, dateTo, nightlyPriceCents)) =>
         repo.propertyOwnerProfileId(propertyId).flatMap {
           case None => fail[AvailabilityCreated](NotFound("property not found"))
           case Some(profileId) =>
             authorize(profileId, editToken).flatMap {
               case Left(error) => fail[AvailabilityCreated](error)
               case Right(_) =>
-                for {
-                  id <- uuid
-                  createdAt <- now
-                  saved <- repo.createAvailability(
-                    AvailabilityRecord(
-                      id = id,
-                      propertyId = propertyId,
-                      dateFrom = dateFrom,
-                      dateTo = dateTo,
-                      createdAt = createdAt
-                    )
-                  )
-                } yield AvailabilityCreated(
-                  id = saved.id.toString,
-                  propertyId = saved.propertyId.toString,
-                  from = saved.dateFrom.toString,
-                  to = saved.dateTo.toString,
-                  createdAt = saved.createdAt.toString
-                ).asRight[ServiceError]
+                repo.hasOverlappingAvailability(propertyId, dateFrom, dateTo).flatMap {
+                  case true => fail[AvailabilityCreated](Conflict("availability period overlaps an existing period"))
+                  case false =>
+                    for {
+                      id <- uuid
+                      createdAt <- now
+                      saved <- repo.createAvailability(
+                        AvailabilityRecord(
+                          id = id,
+                          propertyId = propertyId,
+                          dateFrom = dateFrom,
+                          dateTo = dateTo,
+                          nightlyPriceCents = nightlyPriceCents,
+                          createdAt = createdAt
+                        )
+                      )
+                    } yield toAvailabilityCreated(saved).asRight[ServiceError]
+                }
             }
         }
     }
@@ -263,6 +272,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
       propertyId = value.propertyId.toString,
       from = value.dateFrom.toString,
       to = value.dateTo.toString,
+      nightlyPriceCents = value.nightlyPriceCents,
       createdAt = value.createdAt.toString
     )
 
@@ -288,17 +298,20 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
   ): F[Either[ServiceError, AvailabilityCreated]] =
     validateAvailability(req) match {
       case Left(error) => fail[AvailabilityCreated](error)
-      case Right((dateFrom, dateTo)) =>
+      case Right((dateFrom, dateTo, nightlyPriceCents)) =>
         repo.availabilityOwnerProfileId(availabilityId).flatMap {
           case None => fail[AvailabilityCreated](NotFound("availability period not found"))
           case Some(profileId) =>
             authorize(profileId, editToken).flatMap {
               case Left(error) => fail[AvailabilityCreated](error)
               case Right(_) =>
-                repo.updateAvailability(availabilityId, dateFrom, dateTo).flatMap {
-                  case None => fail[AvailabilityCreated](NotFound("availability period not found"))
-                  case Some(saved) =>
-                    Async[F].pure(toAvailabilityCreated(saved).asRight[ServiceError])
+                repo.hasOverlappingAvailabilityForUpdate(availabilityId, dateFrom, dateTo).flatMap {
+                  case true => fail[AvailabilityCreated](Conflict("availability period overlaps an existing period"))
+                  case false =>
+                    repo.updateAvailability(availabilityId, dateFrom, dateTo, nightlyPriceCents).flatMap {
+                      case None => fail[AvailabilityCreated](NotFound("availability period not found"))
+                      case Some(saved) => Async[F].pure(toAvailabilityCreated(saved).asRight[ServiceError])
+                    }
                 }
             }
         }
@@ -326,7 +339,8 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
       fromRaw: String,
       toRaw: String,
       bedrooms: Int,
-      sleeps: Int
+      sleeps: Int,
+      pricedOnly: Boolean
   ): F[Either[ServiceError, List[SearchResult]]] = {
     val validated =
       for {
@@ -342,9 +356,21 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
     validated match {
       case Left(error) => fail[List[SearchResult]](error)
       case Right((from, to, stayDays)) =>
-        repo.searchAvailable(from, to, bedrooms, sleeps, stayDays).flatMap { matches =>
+        repo.searchAvailable(from, to, bedrooms, sleeps, stayDays, pricedOnly).flatMap { matches =>
           matches.traverse { item =>
             repo.listingsForProperty(item.propertyId).map { listings =>
+              val primaryListing = listings.find(_.platform == "airbnb").orElse(listings.headOption)
+              val cleaningFee = primaryListing.flatMap(_.cleaningFeeCents)
+              val price = item.nightlyTotalCents.map { nightlySubtotal =>
+                PriceEstimate(
+                  currency = "EUR",
+                  nights = stayDays,
+                  nightlySubtotalCents = nightlySubtotal,
+                  cleaningFeeCents = cleaningFee,
+                  estimatedAmountCents = nightlySubtotal + cleaningFee.getOrElse(0L)
+                )
+              }
+
               SearchResult(
                 propertyId = item.propertyId.toString,
                 propertyTitle = item.propertyTitle,
@@ -355,6 +381,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
                 minStayDays = item.minStayDays,
                 availableFrom = item.dateFrom.toString,
                 availableTo = item.dateTo.toString,
+                price = price,
                 links = listings.map(toPublicListing)
               )
             }
@@ -387,6 +414,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
                       platform = "airbnb",
                       externalId = Some(normalized(req.externalId)),
                       url = airbnbUrl(normalized(req.externalId)),
+                      cleaningFeeCents = req.cleaningFeeCents,
                       createdAt = createdAt
                     )
                   )
@@ -396,11 +424,44 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
                   platform = saved.platform,
                   externalId = saved.externalId,
                   url = saved.url,
+                  cleaningFeeCents = saved.cleaningFeeCents,
                   createdAt = saved.createdAt.toString
                 ).asRight[ServiceError]
             }
         }
     }
+
+  def updateListing(
+      listingId: UUID,
+      editToken: String,
+      req: UpdateListingRequest
+  ): F[Either[ServiceError, ListingCreated]] =
+    if (!validCleaningFee(req.cleaningFeeCents))
+      fail[ListingCreated](Invalid("cleaningFeeCents must be between 0 and 10000000 when provided"))
+    else
+      repo.listingOwnerProfileId(listingId).flatMap {
+        case None => fail[ListingCreated](NotFound("listing not found"))
+        case Some(profileId) =>
+          authorize(profileId, editToken).flatMap {
+            case Left(error) => fail[ListingCreated](error)
+            case Right(_) =>
+              repo.updateListingCleaningFee(listingId, req.cleaningFeeCents).flatMap {
+                case None => fail[ListingCreated](NotFound("listing not found"))
+                case Some(saved) =>
+                  Async[F].pure(
+                    ListingCreated(
+                      id = saved.id.toString,
+                      propertyId = saved.propertyId.toString,
+                      platform = saved.platform,
+                      externalId = saved.externalId,
+                      url = saved.url,
+                      cleaningFeeCents = saved.cleaningFeeCents,
+                      createdAt = saved.createdAt.toString
+                    ).asRight[ServiceError]
+                  )
+              }
+          }
+      }
 
   def deleteListing(
       listingId: UUID,

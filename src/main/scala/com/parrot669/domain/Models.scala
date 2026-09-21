@@ -29,6 +29,7 @@ final case class ListingRecord(
     platform: String,
     externalId: Option[String],
     url: String,
+    cleaningFeeCents: Option[Long],
     createdAt: OffsetDateTime
 )
 
@@ -37,6 +38,7 @@ final case class AvailabilityRecord(
     propertyId: UUID,
     dateFrom: LocalDate,
     dateTo: LocalDate,
+    nightlyPriceCents: Option[Long],
     createdAt: OffsetDateTime
 )
 
@@ -49,7 +51,8 @@ final case class AvailablePropertyRecord(
     sleeps: Int,
     minStayDays: Int,
     dateFrom: LocalDate,
-    dateTo: LocalDate
+    dateTo: LocalDate,
+    nightlyTotalCents: Option[Long]
 )
 
 final case class ChallengeRecord(
@@ -78,8 +81,9 @@ final case class VerificationRecord(
 
 final case class CreateProfileRequest(displayName: String, contact: String)
 final case class CreatePropertyRequest(title: String, city: String, bedrooms: Int, sleeps: Int, minStayDays: Int)
-final case class AddListingRequest(platform: String, externalId: String)
-final case class AddAvailabilityRequest(from: String, to: String)
+final case class AddListingRequest(platform: String, externalId: String, cleaningFeeCents: Option[Long])
+final case class UpdateListingRequest(cleaningFeeCents: Option[Long])
+final case class AddAvailabilityRequest(from: String, to: String, nightlyPriceCents: Option[Long])
 
 final case class PublicProfile(
     parrotId: String,
@@ -98,6 +102,7 @@ final case class PublicListing(
     platform: String,
     externalId: Option[String],
     url: String,
+    cleaningFeeCents: Option[Long],
     createdAt: String
 )
 
@@ -161,6 +166,7 @@ final case class ListingCreated(
     platform: String,
     externalId: Option[String],
     url: String,
+    cleaningFeeCents: Option[Long],
     createdAt: String
 )
 
@@ -169,7 +175,16 @@ final case class AvailabilityCreated(
     propertyId: String,
     from: String,
     to: String,
+    nightlyPriceCents: Option[Long],
     createdAt: String
+)
+
+final case class PriceEstimate(
+    currency: String,
+    nights: Int,
+    nightlySubtotalCents: Long,
+    cleaningFeeCents: Option[Long],
+    estimatedAmountCents: Long
 )
 
 final case class SearchResult(
@@ -182,6 +197,7 @@ final case class SearchResult(
     minStayDays: Int,
     availableFrom: String,
     availableTo: String,
+    price: Option[PriceEstimate],
     links: List[PublicListing]
 )
 

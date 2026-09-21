@@ -65,17 +65,17 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
 
   def createAvailability(availability: AvailabilityRecord): F[AvailabilityRecord] =
     sql"""
-      insert into availability_periods (id, property_id, date_from, date_to, created_at)
+      insert into availability_periods (id, property_id, date_from, date_to, nightly_price_cents, created_at)
       values (
         ${availability.id}, ${availability.propertyId}, ${availability.dateFrom},
-        ${availability.dateTo}, ${availability.createdAt}
+        ${availability.dateTo}, ${availability.nightlyPriceCents}, ${availability.createdAt}
       )
-      returning id, property_id, date_from, date_to, created_at
+      returning id, property_id, date_from, date_to, nightly_price_cents, created_at
     """.query[AvailabilityRecord].unique.transact(xa)
 
   def availabilityForProperty(propertyId: UUID): F[List[AvailabilityRecord]] =
     sql"""
-      select id, property_id, date_from, date_to, created_at
+      select id, property_id, date_from, date_to, nightly_price_cents, created_at
       from availability_periods
       where property_id = $propertyId
       order by date_from asc, date_to asc
@@ -84,14 +84,48 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
   def updateAvailability(
       availabilityId: UUID,
       dateFrom: LocalDate,
-      dateTo: LocalDate
+      dateTo: LocalDate,
+      nightlyPriceCents: Option[Long]
   ): F[Option[AvailabilityRecord]] =
     sql"""
       update availability_periods
-      set date_from = $dateFrom, date_to = $dateTo
+      set date_from = $dateFrom, date_to = $dateTo, nightly_price_cents = $nightlyPriceCents
       where id = $availabilityId
-      returning id, property_id, date_from, date_to, created_at
+      returning id, property_id, date_from, date_to, nightly_price_cents, created_at
     """.query[AvailabilityRecord].option.transact(xa)
+
+  def hasOverlappingAvailability(
+      propertyId: UUID,
+      dateFrom: LocalDate,
+      dateTo: LocalDate
+  ): F[Boolean] =
+    sql"""
+      select exists(
+        select 1
+        from availability_periods
+        where property_id = $propertyId
+          and date_from < $dateTo
+          and date_to > $dateFrom
+      )
+    """.query[Boolean].unique.transact(xa)
+
+  def hasOverlappingAvailabilityForUpdate(
+      availabilityId: UUID,
+      dateFrom: LocalDate,
+      dateTo: LocalDate
+  ): F[Boolean] =
+    sql"""
+      select exists(
+        select 1
+        from availability_periods current
+        join availability_periods existing
+          on existing.property_id = current.property_id
+         and existing.id <> current.id
+        where current.id = $availabilityId
+          and existing.date_from < $dateTo
+          and existing.date_to > $dateFrom
+      )
+    """.query[Boolean].unique.transact(xa)
 
   def availabilityOwnerProfileId(availabilityId: UUID): F[Option[UUID]] =
     sql"""
@@ -113,38 +147,111 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
       requestedTo: LocalDate,
       bedrooms: Int,
       sleeps: Int,
-      stayDays: Int
+      stayDays: Int,
+      pricedOnly: Boolean
   ): F[List[AvailablePropertyRecord]] =
     sql"""
-      select distinct on (p.id)
-        p.id, p.title, pr.display_name, p.city, p.bedrooms, p.sleeps, p.min_stay_days, a.date_from, a.date_to
-      from properties p
-      join profiles pr on pr.id = p.profile_id
-      join availability_periods a on a.property_id = p.id
-      where p.city_code = 'barcelona'
-        and p.bedrooms >= $bedrooms
-        and p.sleeps >= $sleeps
-        and p.min_stay_days <= $stayDays
-        and a.date_from <= $requestedFrom
-        and a.date_to >= $requestedTo
-        and exists (
-          select 1
-          from external_listings l
-          where l.property_id = p.id
-        )
-      order by p.id, a.date_from desc
+      with candidates as (
+        select
+          p.id,
+          p.title,
+          pr.display_name,
+          p.city,
+          p.bedrooms,
+          p.sleeps,
+          p.min_stay_days
+        from properties p
+        join profiles pr on pr.id = p.profile_id
+        where p.city_code = 'barcelona'
+          and p.bedrooms >= $bedrooms
+          and p.sleeps >= $sleeps
+          and p.min_stay_days <= $stayDays
+          and exists (
+            select 1
+            from external_listings l
+            where l.property_id = p.id
+          )
+      ),
+      nights as (
+        select generate_series(
+          $requestedFrom::timestamp,
+          ($requestedTo - 1)::timestamp,
+          interval '1 day'
+        )::date as night
+      ),
+      night_coverage as (
+        select
+          c.id,
+          c.title,
+          c.display_name,
+          c.city,
+          c.bedrooms,
+          c.sleeps,
+          c.min_stay_days,
+          n.night,
+          count(a.id) > 0 as is_available,
+          case
+            when count(a.id) > 0
+             and count(*) filter (where a.nightly_price_cents is null) = 0
+             and count(distinct a.nightly_price_cents) = 1
+            then max(a.nightly_price_cents)
+            else null
+          end as nightly_price_cents
+        from candidates c
+        cross join nights n
+        left join availability_periods a
+          on a.property_id = c.id
+         and a.date_from <= n.night
+         and a.date_to > n.night
+        group by
+          c.id, c.title, c.display_name, c.city,
+          c.bedrooms, c.sleeps, c.min_stay_days, n.night
+      ),
+      rolled as (
+        select
+          id,
+          title,
+          display_name,
+          city,
+          bedrooms,
+          sleeps,
+          min_stay_days,
+          bool_and(is_available) as fully_available,
+          case
+            when bool_and(nightly_price_cents is not null)
+            then sum(nightly_price_cents)::bigint
+            else null
+          end as nightly_total_cents
+        from night_coverage
+        group by id, title, display_name, city, bedrooms, sleeps, min_stay_days
+      )
+      select
+        id,
+        title,
+        display_name,
+        city,
+        bedrooms,
+        sleeps,
+        min_stay_days,
+        $requestedFrom,
+        $requestedTo,
+        nightly_total_cents
+      from rolled
+      where fully_available
+        and (not $pricedOnly or nightly_total_cents is not null)
+      order by id
     """.query[AvailablePropertyRecord].to[List].transact(xa)
 
   def createListing(listing: ListingRecord): F[ListingRecord] =
     sql"""
-      insert into external_listings (id, property_id, platform, external_id, url, created_at)
-      values (${listing.id}, ${listing.propertyId}, ${listing.platform}, ${listing.externalId}, ${listing.url}, ${listing.createdAt})
-      returning id, property_id, platform, external_id, url, created_at
+      insert into external_listings (id, property_id, platform, external_id, url, cleaning_fee_cents, created_at)
+      values (${listing.id}, ${listing.propertyId}, ${listing.platform}, ${listing.externalId}, ${listing.url}, ${listing.cleaningFeeCents}, ${listing.createdAt})
+      returning id, property_id, platform, external_id, url, cleaning_fee_cents, created_at
     """.query[ListingRecord].unique.transact(xa)
 
   def listingsForProperty(propertyId: UUID): F[List[ListingRecord]] =
     sql"""
-      select id, property_id, platform, external_id, url, created_at
+      select id, property_id, platform, external_id, url, cleaning_fee_cents, created_at
       from external_listings
       where property_id = $propertyId
       order by created_at asc
@@ -157,6 +264,17 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
       join properties p on p.id = l.property_id
       where l.id = $listingId
     """.query[UUID].option.transact(xa)
+
+  def updateListingCleaningFee(
+      listingId: UUID,
+      cleaningFeeCents: Option[Long]
+  ): F[Option[ListingRecord]] =
+    sql"""
+      update external_listings
+      set cleaning_fee_cents = $cleaningFeeCents
+      where id = $listingId
+      returning id, property_id, platform, external_id, url, cleaning_fee_cents, created_at
+    """.query[ListingRecord].option.transact(xa)
 
   def deleteListing(listingId: UUID): F[Boolean] =
     sql"delete from external_listings where id = $listingId"
@@ -305,7 +423,7 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
 
   def listingsForProfile(profileId: UUID): F[List[ListingRecord]] =
     sql"""
-      select l.id, l.property_id, l.platform, l.external_id, l.url, l.created_at
+      select l.id, l.property_id, l.platform, l.external_id, l.url, l.cleaning_fee_cents, l.created_at
       from external_listings l
       join properties p on p.id = l.property_id
       where p.profile_id = $profileId
