@@ -50,3 +50,6 @@ jobs:
           DATABASE_PASSWORD: parrot
           PARROT_ADMIN_TOKEN: ci-admin-token
         run: bash scripts/smoke-test.sh
+
+      - name: Build deployment image
+        run: docker build -t parrot669-backend:ci .

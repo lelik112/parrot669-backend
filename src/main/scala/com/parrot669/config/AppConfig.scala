@@ -17,14 +17,29 @@ final case class AppConfig(
 )
 
 object AppConfig {
+  private def nonEmpty(env: Map[String, String], key: String): Option[String] =
+    env.get(key).map(_.trim).filter(_.nonEmpty)
+
+  private def railwayJdbcUrl(env: Map[String, String]): Option[String] =
+    for {
+      host <- nonEmpty(env, "PGHOST")
+      port <- nonEmpty(env, "PGPORT")
+      database <- nonEmpty(env, "PGDATABASE")
+    } yield s"jdbc:postgresql://$host:$port/$database"
+
   def load: IO[AppConfig] =
     IO.fromEither {
       val env = sys.env
       val environment = env.getOrElse("APP_ENV", "dev")
-      val port = env.get("HTTP_PORT").flatMap(_.toIntOption).getOrElse(8080)
+
+      val port =
+        nonEmpty(env, "PORT")
+          .orElse(nonEmpty(env, "HTTP_PORT"))
+          .flatMap(_.toIntOption)
+          .getOrElse(8080)
 
       val adminToken =
-        env.get("PARROT_ADMIN_TOKEN").filter(_.nonEmpty).orElse {
+        nonEmpty(env, "PARROT_ADMIN_TOKEN").orElse {
           if (environment == "prod") None else Some("dev-admin-token-change-me")
         }
 
@@ -35,12 +50,15 @@ object AppConfig {
             environment = environment,
             httpPort = port,
             db = DbConfig(
-              url = env.getOrElse(
-                "DATABASE_URL",
+              url = railwayJdbcUrl(env).orElse(nonEmpty(env, "DATABASE_URL")).getOrElse(
                 "jdbc:postgresql://localhost:5432/parrot669"
               ),
-              user = env.getOrElse("DATABASE_USER", "parrot"),
-              password = env.getOrElse("DATABASE_PASSWORD", "parrot")
+              user = nonEmpty(env, "PGUSER")
+                .orElse(nonEmpty(env, "DATABASE_USER"))
+                .getOrElse("parrot"),
+              password = nonEmpty(env, "PGPASSWORD")
+                .orElse(nonEmpty(env, "DATABASE_PASSWORD"))
+                .getOrElse("parrot")
             ),
             adminToken = token
           )
