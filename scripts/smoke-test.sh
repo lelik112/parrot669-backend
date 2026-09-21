@@ -59,43 +59,80 @@ availability_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/
 
 availability_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$availability_json")
 
+availability_list_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/properties/$property_id/availability"   -H "X-Parrot-Token: $edit_token")
+
+AVAILABILITY_LIST_JSON="$availability_list_json" python3 - "$availability_id" <<'PY'
+import json
+import os
+import sys
+
+availability_id = sys.argv[1]
+data = json.loads(os.environ["AVAILABILITY_LIST_JSON"])
+assert len(data) == 1, data
+assert data[0]["id"] == availability_id, data
+assert data[0]["from"] == "2027-01-01", data
+assert data[0]["to"] == "2027-02-28", data
+print("Availability listing passed")
+PY
+
+wrong_update_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   -X PUT "http://localhost:$HTTP_PORT/api/availability/$availability_id"   -H 'content-type: application/json'   -H 'X-Parrot-Token: definitely-wrong-token'   -d '{"from":"2027-01-05","to":"2027-03-05"}')
+
+test "$wrong_update_status" = "401"
+
+updated_availability_json=$(curl --fail --silent   -X PUT "http://localhost:$HTTP_PORT/api/availability/$availability_id"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"from":"2027-01-05","to":"2027-03-05"}')
+
+UPDATED_AVAILABILITY_JSON="$updated_availability_json" python3 - "$availability_id" <<'PY'
+import json
+import os
+import sys
+
+availability_id = sys.argv[1]
+data = json.loads(os.environ["UPDATED_AVAILABILITY_JSON"])
+assert data["id"] == availability_id, data
+assert data["from"] == "2027-01-05", data
+assert data["to"] == "2027-03-05", data
+print("Availability update passed")
+PY
+
 search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2")
 
-empty_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=3")
+updated_boundary_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-05&to=2027-03-05&bedrooms=2")
 
-exact_boundary_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-01&to=2027-02-28&bedrooms=2")
+old_left_boundary_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-01&to=2027-01-20&bedrooms=2")
 
-outside_left_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2026-12-31&to=2027-01-20&bedrooms=2")
+outside_right_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-20&to=2027-03-06&bedrooms=2")
 
-outside_right_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-20&to=2027-03-01&bedrooms=2")
+too_many_bedrooms_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=3")
 
-SEARCH_JSON="$search_json" EMPTY_SEARCH_JSON="$empty_search_json" EXACT_BOUNDARY_SEARCH_JSON="$exact_boundary_search_json" OUTSIDE_LEFT_SEARCH_JSON="$outside_left_search_json" OUTSIDE_RIGHT_SEARCH_JSON="$outside_right_search_json" python3 - "$property_id" "$listing_id" <<'PY'
+SEARCH_JSON="$search_json" UPDATED_BOUNDARY_JSON="$updated_boundary_json" OLD_LEFT_BOUNDARY_JSON="$old_left_boundary_json" OUTSIDE_RIGHT_JSON="$outside_right_json" TOO_MANY_BEDROOMS_JSON="$too_many_bedrooms_json" python3 - "$property_id" "$listing_id" <<'PY'
 import json
 import os
 import sys
 
 property_id = sys.argv[1]
 listing_id = sys.argv[2]
+
 results = json.loads(os.environ["SEARCH_JSON"])
-empty_results = json.loads(os.environ["EMPTY_SEARCH_JSON"])
-exact_boundary_results = json.loads(os.environ["EXACT_BOUNDARY_SEARCH_JSON"])
-outside_left_results = json.loads(os.environ["OUTSIDE_LEFT_SEARCH_JSON"])
-outside_right_results = json.loads(os.environ["OUTSIDE_RIGHT_SEARCH_JSON"])
+updated_boundary = json.loads(os.environ["UPDATED_BOUNDARY_JSON"])
+old_left_boundary = json.loads(os.environ["OLD_LEFT_BOUNDARY_JSON"])
+outside_right = json.loads(os.environ["OUTSIDE_RIGHT_JSON"])
+too_many_bedrooms = json.loads(os.environ["TOO_MANY_BEDROOMS_JSON"])
 
 assert len(results) == 1, results
 result = results[0]
 assert result["propertyId"] == property_id, result
 assert result["city"] == "Barcelona", result
 assert result["bedrooms"] == 2, result
-assert result["availableFrom"] == "2027-01-01", result
-assert result["availableTo"] == "2027-02-28", result
+assert result["availableFrom"] == "2027-01-05", result
+assert result["availableTo"] == "2027-03-05", result
 assert result["links"][0]["id"] == listing_id, result
-assert empty_results == [], empty_results
-assert len(exact_boundary_results) == 1, exact_boundary_results
-assert outside_left_results == [], outside_left_results
-assert outside_right_results == [], outside_right_results
 
-print("Availability boundary search passed")
+assert len(updated_boundary) == 1, updated_boundary
+assert old_left_boundary == [], old_left_boundary
+assert outside_right == [], outside_right
+assert too_many_bedrooms == [], too_many_bedrooms
+
+print("Updated availability search passed")
 PY
 
 wrong_delete_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   -X DELETE "http://localhost:$HTTP_PORT/api/availability/$availability_id"   -H 'X-Parrot-Token: definitely-wrong-token')
@@ -104,14 +141,18 @@ test "$wrong_delete_status" = "401"
 
 curl --fail --silent   -X DELETE "http://localhost:$HTTP_PORT/api/availability/$availability_id"   -H "X-Parrot-Token: $edit_token"   --output /dev/null
 
+after_delete_list_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/properties/$property_id/availability"   -H "X-Parrot-Token: $edit_token")
+
 after_delete_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2")
 
-AFTER_DELETE_SEARCH_JSON="$after_delete_search_json" python3 - <<'PY'
+AFTER_DELETE_LIST_JSON="$after_delete_list_json" AFTER_DELETE_SEARCH_JSON="$after_delete_search_json" python3 - <<'PY'
 import json
 import os
 
-data = json.loads(os.environ["AFTER_DELETE_SEARCH_JSON"])
-assert data == [], data
+periods = json.loads(os.environ["AFTER_DELETE_LIST_JSON"])
+search = json.loads(os.environ["AFTER_DELETE_SEARCH_JSON"])
+assert periods == [], periods
+assert search == [], search
 print("Availability deletion passed")
 PY
 
@@ -155,14 +196,4 @@ data = json.loads(os.environ["VERIFICATION_JSON"])
 assert data["claim"] == "controls_listing", data
 assert data["method"] == "calendar_challenge", data
 print("Verification response passed")
-PY
-
-AVAILABILITY_JSON="$availability_json" python3 - <<'PY'
-import json
-import os
-
-data = json.loads(os.environ["AVAILABILITY_JSON"])
-assert data["from"] == "2027-01-01", data
-assert data["to"] == "2027-02-28", data
-print("Availability creation passed")
 PY

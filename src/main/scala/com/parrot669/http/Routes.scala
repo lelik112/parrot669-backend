@@ -81,6 +81,14 @@ final class Routes[F[_]: Async](service: ParrotService[F], adminToken: String) e
           }
       }
 
+    case request @ GET -> Root / "api" / "properties" / propertyIdRaw / "availability" =>
+      parseUuid(propertyIdRaw) match {
+        case Left(error) => respondError(error)
+        case Right(propertyId) =>
+          val token = header(request, "X-Parrot-Token")
+          service.listAvailability(propertyId, token).flatMap(result => respond(result))
+      }
+
     case request @ POST -> Root / "api" / "properties" / propertyIdRaw / "availability" =>
       parseUuid(propertyIdRaw) match {
         case Left(error) => respondError(error)
@@ -90,6 +98,18 @@ final class Routes[F[_]: Async](service: ParrotService[F], adminToken: String) e
             service
               .addAvailability(propertyId, token, body)
               .flatMap(result => respond(result, created = true))
+          }
+      }
+
+    case request @ PUT -> Root / "api" / "availability" / availabilityIdRaw =>
+      parseUuid(availabilityIdRaw) match {
+        case Left(error) => respondError(error)
+        case Right(availabilityId) =>
+          decode[AddAvailabilityRequest](request) { body =>
+            val token = header(request, "X-Parrot-Token")
+            service
+              .updateAvailability(availabilityId, token, body)
+              .flatMap(result => respond(result))
           }
       }
 

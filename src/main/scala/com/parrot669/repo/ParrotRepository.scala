@@ -66,6 +66,26 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
       returning id, property_id, date_from, date_to, created_at
     """.query[AvailabilityRecord].unique.transact(xa)
 
+  def availabilityForProperty(propertyId: UUID): F[List[AvailabilityRecord]] =
+    sql"""
+      select id, property_id, date_from, date_to, created_at
+      from availability_periods
+      where property_id = $propertyId
+      order by date_from asc, date_to asc
+    """.query[AvailabilityRecord].to[List].transact(xa)
+
+  def updateAvailability(
+      availabilityId: UUID,
+      dateFrom: LocalDate,
+      dateTo: LocalDate
+  ): F[Option[AvailabilityRecord]] =
+    sql"""
+      update availability_periods
+      set date_from = $dateFrom, date_to = $dateTo
+      where id = $availabilityId
+      returning id, property_id, date_from, date_to, created_at
+    """.query[AvailabilityRecord].option.transact(xa)
+
   def availabilityOwnerProfileId(availabilityId: UUID): F[Option[UUID]] =
     sql"""
       select p.profile_id

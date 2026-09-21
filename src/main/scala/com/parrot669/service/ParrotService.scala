@@ -239,6 +239,53 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
         }
     }
 
+  private def toAvailabilityCreated(value: AvailabilityRecord): AvailabilityCreated =
+    AvailabilityCreated(
+      id = value.id.toString,
+      propertyId = value.propertyId.toString,
+      from = value.dateFrom.toString,
+      to = value.dateTo.toString,
+      createdAt = value.createdAt.toString
+    )
+
+  def listAvailability(
+      propertyId: UUID,
+      editToken: String
+  ): F[Either[ServiceError, List[AvailabilityCreated]]] =
+    repo.propertyOwnerProfileId(propertyId).flatMap {
+      case None => fail[List[AvailabilityCreated]](NotFound("property not found"))
+      case Some(profileId) =>
+        authorize(profileId, editToken).flatMap {
+          case Left(error) => fail[List[AvailabilityCreated]](error)
+          case Right(_) =>
+            repo.availabilityForProperty(propertyId)
+              .map(_.map(toAvailabilityCreated).asRight[ServiceError])
+        }
+    }
+
+  def updateAvailability(
+      availabilityId: UUID,
+      editToken: String,
+      req: AddAvailabilityRequest
+  ): F[Either[ServiceError, AvailabilityCreated]] =
+    validateAvailability(req) match {
+      case Left(error) => fail[AvailabilityCreated](error)
+      case Right((dateFrom, dateTo)) =>
+        repo.availabilityOwnerProfileId(availabilityId).flatMap {
+          case None => fail[AvailabilityCreated](NotFound("availability period not found"))
+          case Some(profileId) =>
+            authorize(profileId, editToken).flatMap {
+              case Left(error) => fail[AvailabilityCreated](error)
+              case Right(_) =>
+                repo.updateAvailability(availabilityId, dateFrom, dateTo).flatMap {
+                  case None => fail[AvailabilityCreated](NotFound("availability period not found"))
+                  case Some(saved) =>
+                    Async[F].pure(toAvailabilityCreated(saved).asRight[ServiceError])
+                }
+            }
+        }
+    }
+
   def deleteAvailability(
       availabilityId: UUID,
       editToken: String
