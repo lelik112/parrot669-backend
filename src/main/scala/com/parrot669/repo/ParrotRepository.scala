@@ -42,10 +42,10 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
 
   def createProperty(property: PropertyRecord): F[PropertyRecord] =
     sql"""
-      insert into properties (id, profile_id, title, city, bedrooms, sleeps, min_stay_days, created_at)
+      insert into properties (id, profile_id, title, city, city_code, bedrooms, sleeps, min_stay_days, created_at)
       values (
         ${property.id}, ${property.profileId}, ${property.title},
-        ${property.city}, ${property.bedrooms}, ${property.sleeps}, ${property.minStayDays}, ${property.createdAt}
+        ${property.city}, 'barcelona', ${property.bedrooms}, ${property.sleeps}, ${property.minStayDays}, ${property.createdAt}
       )
       returning id, profile_id, title, city, bedrooms, sleeps, min_stay_days, created_at
     """.query[PropertyRecord].unique.transact(xa)
