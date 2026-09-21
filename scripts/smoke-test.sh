@@ -63,13 +63,14 @@ verification_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/
 
 public_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/p/$parrot_id")
 
-python3 - "$listing_id" "$parrot_id" <<'PY' <<<"$public_json"
+PUBLIC_JSON="$public_json" python3 - "$listing_id" "$parrot_id" <<'PY'
 import json
+import os
 import sys
 
 listing_id = sys.argv[1]
 parrot_id = sys.argv[2]
-data = json.load(sys.stdin)
+data = json.loads(os.environ["PUBLIC_JSON"])
 
 assert data["profile"]["parrotId"] == parrot_id, data
 assert len(data["properties"]) == 1, data
@@ -85,11 +86,11 @@ assert claim["active"] is True, data
 print("Smoke test passed")
 PY
 
-python3 - <<'PY' <<<"$verification_json"
+VERIFICATION_JSON="$verification_json" python3 - <<'PY'
 import json
-import sys
+import os
 
-data = json.load(sys.stdin)
+data = json.loads(os.environ["VERIFICATION_JSON"])
 assert data["claim"] == "controls_listing", data
 assert data["method"] == "calendar_challenge", data
 print("Verification response passed")
