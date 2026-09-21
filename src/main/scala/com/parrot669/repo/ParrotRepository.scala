@@ -66,6 +66,21 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
       returning id, property_id, date_from, date_to, created_at
     """.query[AvailabilityRecord].unique.transact(xa)
 
+  def availabilityOwnerProfileId(availabilityId: UUID): F[Option[UUID]] =
+    sql"""
+      select p.profile_id
+      from availability_periods a
+      join properties p on p.id = a.property_id
+      where a.id = $availabilityId
+    """.query[UUID].option.transact(xa)
+
+  def deleteAvailability(availabilityId: UUID): F[Boolean] =
+    sql"delete from availability_periods where id = $availabilityId"
+      .update
+      .run
+      .map(_ == 1)
+      .transact(xa)
+
   def searchAvailable(
       city: String,
       requestedFrom: LocalDate,

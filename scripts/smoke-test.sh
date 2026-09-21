@@ -57,11 +57,19 @@ listing_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<
 
 availability_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/properties/$property_id/availability"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"from":"2027-01-01","to":"2027-02-28"}')
 
+availability_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$availability_json")
+
 search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2")
 
 empty_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=3")
 
-SEARCH_JSON="$search_json" EMPTY_SEARCH_JSON="$empty_search_json" python3 - "$property_id" "$listing_id" <<'PY'
+exact_boundary_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-01&to=2027-02-28&bedrooms=2")
+
+outside_left_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2026-12-31&to=2027-01-20&bedrooms=2")
+
+outside_right_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-20&to=2027-03-01&bedrooms=2")
+
+SEARCH_JSON="$search_json" EMPTY_SEARCH_JSON="$empty_search_json" EXACT_BOUNDARY_SEARCH_JSON="$exact_boundary_search_json" OUTSIDE_LEFT_SEARCH_JSON="$outside_left_search_json" OUTSIDE_RIGHT_SEARCH_JSON="$outside_right_search_json" python3 - "$property_id" "$listing_id" <<'PY'
 import json
 import os
 import sys
@@ -70,6 +78,9 @@ property_id = sys.argv[1]
 listing_id = sys.argv[2]
 results = json.loads(os.environ["SEARCH_JSON"])
 empty_results = json.loads(os.environ["EMPTY_SEARCH_JSON"])
+exact_boundary_results = json.loads(os.environ["EXACT_BOUNDARY_SEARCH_JSON"])
+outside_left_results = json.loads(os.environ["OUTSIDE_LEFT_SEARCH_JSON"])
+outside_right_results = json.loads(os.environ["OUTSIDE_RIGHT_SEARCH_JSON"])
 
 assert len(results) == 1, results
 result = results[0]
@@ -80,8 +91,28 @@ assert result["availableFrom"] == "2027-01-01", result
 assert result["availableTo"] == "2027-02-28", result
 assert result["links"][0]["id"] == listing_id, result
 assert empty_results == [], empty_results
+assert len(exact_boundary_results) == 1, exact_boundary_results
+assert outside_left_results == [], outside_left_results
+assert outside_right_results == [], outside_right_results
 
-print("Availability search passed")
+print("Availability boundary search passed")
+PY
+
+wrong_delete_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   -X DELETE "http://localhost:$HTTP_PORT/api/availability/$availability_id"   -H 'X-Parrot-Token: definitely-wrong-token')
+
+test "$wrong_delete_status" = "401"
+
+curl --fail --silent   -X DELETE "http://localhost:$HTTP_PORT/api/availability/$availability_id"   -H "X-Parrot-Token: $edit_token"   --output /dev/null
+
+after_delete_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2")
+
+AFTER_DELETE_SEARCH_JSON="$after_delete_search_json" python3 - <<'PY'
+import json
+import os
+
+data = json.loads(os.environ["AFTER_DELETE_SEARCH_JSON"])
+assert data == [], data
+print("Availability deletion passed")
 PY
 
 challenge_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/listings/$listing_id/challenges"   -H "X-Parrot-Token: $edit_token")

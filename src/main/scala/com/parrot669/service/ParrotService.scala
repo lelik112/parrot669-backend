@@ -239,6 +239,23 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
         }
     }
 
+  def deleteAvailability(
+      availabilityId: UUID,
+      editToken: String
+  ): F[Either[ServiceError, Unit]] =
+    repo.availabilityOwnerProfileId(availabilityId).flatMap {
+      case None => fail[Unit](NotFound("availability period not found"))
+      case Some(profileId) =>
+        authorize(profileId, editToken).flatMap {
+          case Left(error) => fail[Unit](error)
+          case Right(_) =>
+            repo.deleteAvailability(availabilityId).flatMap {
+              case true  => Async[F].pure(Right[ServiceError, Unit](()))
+              case false => fail[Unit](NotFound("availability period not found"))
+            }
+        }
+    }
+
   def search(
       city: String,
       fromRaw: String,

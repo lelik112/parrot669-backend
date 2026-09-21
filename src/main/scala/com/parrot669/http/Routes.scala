@@ -93,6 +93,17 @@ final class Routes[F[_]: Async](service: ParrotService[F], adminToken: String) e
           }
       }
 
+    case request @ DELETE -> Root / "api" / "availability" / availabilityIdRaw =>
+      parseUuid(availabilityIdRaw) match {
+        case Left(error) => respondError(error)
+        case Right(availabilityId) =>
+          val token = header(request, "X-Parrot-Token")
+          service.deleteAvailability(availabilityId, token).flatMap {
+            case Right(_)    => NoContent()
+            case Left(error) => respondError(error)
+          }
+      }
+
     case request @ GET -> Root / "api" / "search" =>
       val params = request.uri.query.params
       params.get("bedrooms").flatMap(_.toIntOption) match {
