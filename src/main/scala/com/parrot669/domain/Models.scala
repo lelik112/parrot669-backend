@@ -18,6 +18,8 @@ final case class PropertyRecord(
     title: String,
     city: String,
     bedrooms: Int,
+    sleeps: Int,
+    minStayDays: Int,
     createdAt: OffsetDateTime
 )
 
@@ -25,6 +27,7 @@ final case class ListingRecord(
     id: UUID,
     propertyId: UUID,
     platform: String,
+    externalId: Option[String],
     url: String,
     createdAt: OffsetDateTime
 )
@@ -41,6 +44,8 @@ final case class AvailablePropertyRecord(
     propertyId: UUID,
     city: String,
     bedrooms: Int,
+    sleeps: Int,
+    minStayDays: Int,
     dateFrom: LocalDate,
     dateTo: LocalDate
 )
@@ -70,8 +75,8 @@ final case class VerificationRecord(
 )
 
 final case class CreateProfileRequest(displayName: String, contact: String)
-final case class CreatePropertyRequest(title: String, city: String, bedrooms: Int)
-final case class AddListingRequest(platform: String, url: String)
+final case class CreatePropertyRequest(title: String, city: String, bedrooms: Int, sleeps: Int, minStayDays: Int)
+final case class AddListingRequest(platform: String, externalId: String)
 final case class AddAvailabilityRequest(from: String, to: String)
 
 final case class PublicProfile(
@@ -89,6 +94,7 @@ final case class ProfileCreated(
 final case class PublicListing(
     id: String,
     platform: String,
+    externalId: Option[String],
     url: String,
     createdAt: String
 )
@@ -98,6 +104,8 @@ final case class PublicProperty(
     title: String,
     city: String,
     bedrooms: Int,
+    sleeps: Int,
+    minStayDays: Int,
     createdAt: String,
     listings: List[PublicListing]
 )
@@ -123,6 +131,8 @@ final case class PropertyCreated(
     title: String,
     city: String,
     bedrooms: Int,
+    sleeps: Int,
+    minStayDays: Int,
     createdAt: String
 )
 
@@ -130,6 +140,7 @@ final case class ListingCreated(
     id: String,
     propertyId: String,
     platform: String,
+    externalId: Option[String],
     url: String,
     createdAt: String
 )
@@ -146,6 +157,8 @@ final case class SearchResult(
     propertyId: String,
     city: String,
     bedrooms: Int,
+    sleeps: Int,
+    minStayDays: Int,
     availableFrom: String,
     availableTo: String,
     links: List[PublicListing]

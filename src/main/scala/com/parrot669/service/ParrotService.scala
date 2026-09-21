@@ -5,10 +5,10 @@ import cats.syntax.all._
 import com.parrot669.domain._
 import com.parrot669.repo.ParrotRepository
 
-import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.security.{MessageDigest, SecureRandom}
 import java.time.{LocalDate, OffsetDateTime, ZoneId, ZoneOffset}
+import java.time.temporal.ChronoUnit
 import java.util.{Base64, UUID}
 import scala.util.Try
 
@@ -92,6 +92,8 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
     else if (city.isEmpty) Left(Invalid("city is required"))
     else if (city.length > 120) Left(Invalid("city is too long"))
     else if (req.bedrooms < 1 || req.bedrooms > 20) Left(Invalid("bedrooms must be between 1 and 20"))
+    else if (req.sleeps < 1 || req.sleeps > 40) Left(Invalid("sleeps must be between 1 and 40"))
+    else if (req.minStayDays < 1 || req.minStayDays > 365) Left(Invalid("minStayDays must be between 1 and 365"))
     else Right(())
   }
 
@@ -104,20 +106,17 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
       _ <- Either.cond(!to.isBefore(from), (), Invalid("to must be on or after from"))
     } yield (from, to)
 
-  private def isAirbnbUrl(raw: String): Boolean =
-    Try(new URI(raw)).toOption.exists { uri =>
-      val host = Option(uri.getHost).fold("")(_.toLowerCase)
-      uri.getScheme == "https" && host.matches("(^|.*\\.)airbnb\\.[a-z.]+$")
-    }
-
   private def validateListing(req: AddListingRequest): Either[ServiceError, Unit] = {
     val platform = normalized(req.platform).toLowerCase
-    val url = normalized(req.url)
+    val externalId = normalized(req.externalId)
 
     if (platform != "airbnb") Left(Invalid("only airbnb is supported in v0"))
-    else if (!isAirbnbUrl(url)) Left(Invalid("url must be an https Airbnb URL"))
+    else if (!externalId.matches("[0-9]{1,32}")) Left(Invalid("externalId must be an Airbnb numeric listing id"))
     else Right(())
   }
+
+  private def airbnbUrl(externalId: String): String =
+    s"https://www.airbnb.com/rooms/$externalId"
 
   private def authorize(profileId: UUID, editToken: String): F[Either[ServiceError, Unit]] =
     if (normalized(editToken).isEmpty) fail[Unit](Unauthorized())
@@ -133,6 +132,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
     PublicListing(
       id = listing.id.toString,
       platform = listing.platform,
+      externalId = listing.externalId,
       url = listing.url,
       createdAt = listing.createdAt.toString
     )
@@ -189,6 +189,8 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
                   title = normalized(req.title),
                   city = normalized(req.city),
                   bedrooms = req.bedrooms,
+                  sleeps = req.sleeps,
+                  minStayDays = req.minStayDays,
                   createdAt = createdAt
                 )
               )
@@ -197,6 +199,8 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
               title = saved.title,
               city = saved.city,
               bedrooms = saved.bedrooms,
+              sleeps = saved.sleeps,
+              minStayDays = saved.minStayDays,
               createdAt = saved.createdAt.toString
             ).asRight[ServiceError]
         }
@@ -307,7 +311,8 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
       city: String,
       fromRaw: String,
       toRaw: String,
-      bedrooms: Int
+      bedrooms: Int,
+      sleeps: Int
   ): F[Either[ServiceError, List[SearchResult]]] = {
     val validated =
       for {
@@ -316,18 +321,22 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
         to <- parseDate(toRaw, "to")
         _ <- Either.cond(!to.isBefore(from), (), Invalid("to must be on or after from"))
         _ <- Either.cond(bedrooms >= 1 && bedrooms <= 20, (), Invalid("bedrooms must be between 1 and 20"))
-      } yield (from, to)
+        _ <- Either.cond(sleeps >= 1 && sleeps <= 40, (), Invalid("sleeps must be between 1 and 40"))
+        stayDays = math.max(1, ChronoUnit.DAYS.between(from, to).toInt)
+      } yield (from, to, stayDays)
 
     validated match {
       case Left(error) => fail[List[SearchResult]](error)
-      case Right((from, to)) =>
-        repo.searchAvailable(normalized(city), from, to, bedrooms).flatMap { matches =>
+      case Right((from, to, stayDays)) =>
+        repo.searchAvailable(normalized(city), from, to, bedrooms, sleeps, stayDays).flatMap { matches =>
           matches.traverse { item =>
             repo.listingsForProperty(item.propertyId).map { listings =>
               SearchResult(
                 propertyId = item.propertyId.toString,
                 city = item.city,
                 bedrooms = item.bedrooms,
+                sleeps = item.sleeps,
+                minStayDays = item.minStayDays,
                 availableFrom = item.dateFrom.toString,
                 availableTo = item.dateTo.toString,
                 links = listings.map(toPublicListing)
@@ -360,7 +369,8 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
                       id = id,
                       propertyId = propertyId,
                       platform = "airbnb",
-                      url = normalized(req.url),
+                      externalId = Some(normalized(req.externalId)),
+                      url = airbnbUrl(normalized(req.externalId)),
                       createdAt = createdAt
                     )
                   )
@@ -368,6 +378,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
                   id = saved.id.toString,
                   propertyId = saved.propertyId.toString,
                   platform = saved.platform,
+                  externalId = saved.externalId,
                   url = saved.url,
                   createdAt = saved.createdAt.toString
                 ).asRight[ServiceError]
@@ -461,6 +472,8 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
                 title = property.title,
                 city = property.city,
                 bedrooms = property.bedrooms,
+                sleeps = property.sleeps,
+                minStayDays = property.minStayDays,
                 createdAt = property.createdAt.toString,
                 listings = listings
                   .filter(_.propertyId == property.id)

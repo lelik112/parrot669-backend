@@ -126,15 +126,20 @@ final class Routes[F[_]: Async](service: ParrotService[F], adminToken: String) e
 
     case request @ GET -> Root / "api" / "search" =>
       val params = request.uri.query.params
-      params.get("bedrooms").flatMap(_.toIntOption) match {
-        case None => respondError(ServiceError.Invalid("bedrooms must be an integer"))
-        case Some(bedrooms) =>
+      val bedrooms = params.get("bedrooms").fold(Option(1))(_.toIntOption)
+      val sleeps = params.get("sleeps").fold(Option(1))(_.toIntOption)
+
+      (bedrooms, sleeps) match {
+        case (None, _) => respondError(ServiceError.Invalid("bedrooms must be an integer"))
+        case (_, None) => respondError(ServiceError.Invalid("sleeps must be an integer"))
+        case (Some(bedroomCount), Some(sleepCount)) =>
           service
             .search(
               city = params.getOrElse("city", ""),
               fromRaw = params.getOrElse("from", ""),
               toRaw = params.getOrElse("to", ""),
-              bedrooms = bedrooms
+              bedrooms = bedroomCount,
+              sleeps = sleepCount
             )
             .flatMap(result => respond(result))
       }

@@ -47,11 +47,11 @@ profile_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<
 parrot_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["profile"]["parrotId"])' <<<"$profile_json")
 edit_token=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["editToken"])' <<<"$profile_json")
 
-property_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/profiles/$profile_id/properties"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"title":"CI Apartment","city":"Barcelona","bedrooms":2}')
+property_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/profiles/$profile_id/properties"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"title":"CI Apartment","city":"Barcelona","bedrooms":2,"sleeps":5,"minStayDays":7}')
 
 property_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$property_json")
 
-listing_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/properties/$property_id/listings"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"platform":"airbnb","url":"https://www.airbnb.com/rooms/123456789"}')
+listing_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/properties/$property_id/listings"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"platform":"airbnb","externalId":"123456789"}')
 
 listing_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$listing_json")
 
@@ -94,17 +94,23 @@ assert data["to"] == "2027-03-05", data
 print("Availability update passed")
 PY
 
-search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2")
+search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
 
-updated_boundary_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-05&to=2027-03-05&bedrooms=2")
+updated_boundary_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-05&to=2027-03-05&bedrooms=2&sleeps=4")
 
-old_left_boundary_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-01&to=2027-01-20&bedrooms=2")
+old_left_boundary_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-01&to=2027-01-20&bedrooms=2&sleeps=4")
 
-outside_right_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-20&to=2027-03-06&bedrooms=2")
+outside_right_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-20&to=2027-03-06&bedrooms=2&sleeps=4")
 
-too_many_bedrooms_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=3")
+too_many_bedrooms_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=3&sleeps=4")
 
-SEARCH_JSON="$search_json" UPDATED_BOUNDARY_JSON="$updated_boundary_json" OLD_LEFT_BOUNDARY_JSON="$old_left_boundary_json" OUTSIDE_RIGHT_JSON="$outside_right_json" TOO_MANY_BEDROOMS_JSON="$too_many_bedrooms_json" python3 - "$property_id" "$listing_id" <<'PY'
+too_many_guests_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=6")
+
+too_short_stay_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-15&bedrooms=2&sleeps=4")
+
+minimum_stay_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-17&bedrooms=2&sleeps=4")
+
+SEARCH_JSON="$search_json" UPDATED_BOUNDARY_JSON="$updated_boundary_json" OLD_LEFT_BOUNDARY_JSON="$old_left_boundary_json" OUTSIDE_RIGHT_JSON="$outside_right_json" TOO_MANY_BEDROOMS_JSON="$too_many_bedrooms_json" TOO_MANY_GUESTS_JSON="$too_many_guests_json" TOO_SHORT_STAY_JSON="$too_short_stay_json" MINIMUM_STAY_JSON="$minimum_stay_json" python3 - "$property_id" "$listing_id" <<'PY'
 import json
 import os
 import sys
@@ -117,12 +123,19 @@ updated_boundary = json.loads(os.environ["UPDATED_BOUNDARY_JSON"])
 old_left_boundary = json.loads(os.environ["OLD_LEFT_BOUNDARY_JSON"])
 outside_right = json.loads(os.environ["OUTSIDE_RIGHT_JSON"])
 too_many_bedrooms = json.loads(os.environ["TOO_MANY_BEDROOMS_JSON"])
+too_many_guests = json.loads(os.environ["TOO_MANY_GUESTS_JSON"])
+too_short_stay = json.loads(os.environ["TOO_SHORT_STAY_JSON"])
+minimum_stay = json.loads(os.environ["MINIMUM_STAY_JSON"])
 
 assert len(results) == 1, results
 result = results[0]
 assert result["propertyId"] == property_id, result
 assert result["city"] == "Barcelona", result
 assert result["bedrooms"] == 2, result
+assert result["sleeps"] == 5, result
+assert result["minStayDays"] == 7, result
+assert result["links"][0]["externalId"] == "123456789", result
+assert result["links"][0]["url"] == "https://www.airbnb.com/rooms/123456789", result
 assert result["availableFrom"] == "2027-01-05", result
 assert result["availableTo"] == "2027-03-05", result
 assert result["links"][0]["id"] == listing_id, result
@@ -131,6 +144,9 @@ assert len(updated_boundary) == 1, updated_boundary
 assert old_left_boundary == [], old_left_boundary
 assert outside_right == [], outside_right
 assert too_many_bedrooms == [], too_many_bedrooms
+assert too_many_guests == [], too_many_guests
+assert too_short_stay == [], too_short_stay
+assert len(minimum_stay) == 1, minimum_stay
 
 print("Updated availability search passed")
 PY
@@ -143,7 +159,7 @@ curl --fail --silent   -X DELETE "http://localhost:$HTTP_PORT/api/availability/$
 
 after_delete_list_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/properties/$property_id/availability"   -H "X-Parrot-Token: $edit_token")
 
-after_delete_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2")
+after_delete_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
 
 AFTER_DELETE_LIST_JSON="$after_delete_list_json" AFTER_DELETE_SEARCH_JSON="$after_delete_search_json" python3 - <<'PY'
 import json
@@ -176,6 +192,8 @@ data = json.loads(os.environ["PUBLIC_JSON"])
 assert data["profile"]["parrotId"] == parrot_id, data
 assert len(data["properties"]) == 1, data
 assert data["properties"][0]["bedrooms"] == 2, data
+assert data["properties"][0]["sleeps"] == 5, data
+assert data["properties"][0]["minStayDays"] == 7, data
 assert data["properties"][0]["listings"][0]["id"] == listing_id, data
 
 claims = data["verifications"]
