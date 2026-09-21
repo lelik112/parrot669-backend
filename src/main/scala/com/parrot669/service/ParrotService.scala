@@ -8,7 +8,7 @@ import com.parrot669.repo.ParrotRepository
 import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.security.{MessageDigest, SecureRandom}
-import java.time.{OffsetDateTime, ZoneId, ZoneOffset}
+import java.time.{LocalDate, OffsetDateTime, ZoneId, ZoneOffset}
 import java.util.{Base64, UUID}
 import scala.util.Try
 
@@ -69,6 +69,9 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
     MessageDigest.isEqual(candidate, stored)
   }
 
+  private def parseDate(raw: String, field: String): Either[ServiceError, LocalDate] =
+    Try(LocalDate.parse(normalized(raw))).toEither.leftMap(_ => Invalid(s"$field must be YYYY-MM-DD"))
+
   private def validateProfile(req: CreateProfileRequest): Either[ServiceError, Unit] = {
     val name = normalized(req.displayName)
     val contact = normalized(req.contact)
@@ -88,8 +91,18 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
     else if (title.length > 160) Left(Invalid("title is too long"))
     else if (city.isEmpty) Left(Invalid("city is required"))
     else if (city.length > 120) Left(Invalid("city is too long"))
+    else if (req.bedrooms < 1 || req.bedrooms > 20) Left(Invalid("bedrooms must be between 1 and 20"))
     else Right(())
   }
+
+  private def validateAvailability(
+      req: AddAvailabilityRequest
+  ): Either[ServiceError, (LocalDate, LocalDate)] =
+    for {
+      from <- parseDate(req.from, "from")
+      to <- parseDate(req.to, "to")
+      _ <- Either.cond(!to.isBefore(from), (), Invalid("to must be on or after from"))
+    } yield (from, to)
 
   private def isAirbnbUrl(raw: String): Boolean =
     Try(new URI(raw)).toOption.exists { uri =>
@@ -115,6 +128,14 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
           Right[ServiceError, Unit](())
         case Some(_) => Left[ServiceError, Unit](Unauthorized())
       }
+
+  private def toPublicListing(listing: ListingRecord): PublicListing =
+    PublicListing(
+      id = listing.id.toString,
+      platform = listing.platform,
+      url = listing.url,
+      createdAt = listing.createdAt.toString
+    )
 
   def health: F[Boolean] = repo.health
 
@@ -167,6 +188,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
                   profileId = profileId,
                   title = normalized(req.title),
                   city = normalized(req.city),
+                  bedrooms = req.bedrooms,
                   createdAt = createdAt
                 )
               )
@@ -174,10 +196,83 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
               id = saved.id.toString,
               title = saved.title,
               city = saved.city,
+              bedrooms = saved.bedrooms,
               createdAt = saved.createdAt.toString
             ).asRight[ServiceError]
         }
     }
+
+  def addAvailability(
+      propertyId: UUID,
+      editToken: String,
+      req: AddAvailabilityRequest
+  ): F[Either[ServiceError, AvailabilityCreated]] =
+    validateAvailability(req) match {
+      case Left(error) => fail[AvailabilityCreated](error)
+      case Right((dateFrom, dateTo)) =>
+        repo.propertyOwnerProfileId(propertyId).flatMap {
+          case None => fail[AvailabilityCreated](NotFound("property not found"))
+          case Some(profileId) =>
+            authorize(profileId, editToken).flatMap {
+              case Left(error) => fail[AvailabilityCreated](error)
+              case Right(_) =>
+                for {
+                  id <- uuid
+                  createdAt <- now
+                  saved <- repo.createAvailability(
+                    AvailabilityRecord(
+                      id = id,
+                      propertyId = propertyId,
+                      dateFrom = dateFrom,
+                      dateTo = dateTo,
+                      createdAt = createdAt
+                    )
+                  )
+                } yield AvailabilityCreated(
+                  id = saved.id.toString,
+                  propertyId = saved.propertyId.toString,
+                  from = saved.dateFrom.toString,
+                  to = saved.dateTo.toString,
+                  createdAt = saved.createdAt.toString
+                ).asRight[ServiceError]
+            }
+        }
+    }
+
+  def search(
+      city: String,
+      fromRaw: String,
+      toRaw: String,
+      bedrooms: Int
+  ): F[Either[ServiceError, List[SearchResult]]] = {
+    val validated =
+      for {
+        _ <- Either.cond(normalized(city).nonEmpty, (), Invalid("city is required"))
+        from <- parseDate(fromRaw, "from")
+        to <- parseDate(toRaw, "to")
+        _ <- Either.cond(!to.isBefore(from), (), Invalid("to must be on or after from"))
+        _ <- Either.cond(bedrooms >= 1 && bedrooms <= 20, (), Invalid("bedrooms must be between 1 and 20"))
+      } yield (from, to)
+
+    validated match {
+      case Left(error) => fail[List[SearchResult]](error)
+      case Right((from, to)) =>
+        repo.searchAvailable(normalized(city), from, to, bedrooms).flatMap { matches =>
+          matches.traverse { item =>
+            repo.listingsForProperty(item.propertyId).map { listings =>
+              SearchResult(
+                propertyId = item.propertyId.toString,
+                city = item.city,
+                bedrooms = item.bedrooms,
+                availableFrom = item.dateFrom.toString,
+                availableTo = item.dateTo.toString,
+                links = listings.map(toPublicListing)
+              )
+            }
+          }.map(_.asRight[ServiceError])
+        }
+    }
+  }
 
   def addListing(
       propertyId: UUID,
@@ -301,17 +396,11 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
                 id = property.id.toString,
                 title = property.title,
                 city = property.city,
+                bedrooms = property.bedrooms,
                 createdAt = property.createdAt.toString,
                 listings = listings
                   .filter(_.propertyId == property.id)
-                  .map { listing =>
-                    PublicListing(
-                      id = listing.id.toString,
-                      platform = listing.platform,
-                      url = listing.url,
-                      createdAt = listing.createdAt.toString
-                    )
-                  }
+                  .map(toPublicListing)
               )
             }
 

@@ -42,9 +42,12 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
 
   def createProperty(property: PropertyRecord): F[PropertyRecord] =
     sql"""
-      insert into properties (id, profile_id, title, city, created_at)
-      values (${property.id}, ${property.profileId}, ${property.title}, ${property.city}, ${property.createdAt})
-      returning id, profile_id, title, city, created_at
+      insert into properties (id, profile_id, title, city, bedrooms, created_at)
+      values (
+        ${property.id}, ${property.profileId}, ${property.title},
+        ${property.city}, ${property.bedrooms}, ${property.createdAt}
+      )
+      returning id, profile_id, title, city, bedrooms, created_at
     """.query[PropertyRecord].unique.transact(xa)
 
   def propertyOwnerProfileId(propertyId: UUID): F[Option[UUID]] =
@@ -53,12 +56,53 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
       .option
       .transact(xa)
 
+  def createAvailability(availability: AvailabilityRecord): F[AvailabilityRecord] =
+    sql"""
+      insert into availability_periods (id, property_id, date_from, date_to, created_at)
+      values (
+        ${availability.id}, ${availability.propertyId}, ${availability.dateFrom},
+        ${availability.dateTo}, ${availability.createdAt}
+      )
+      returning id, property_id, date_from, date_to, created_at
+    """.query[AvailabilityRecord].unique.transact(xa)
+
+  def searchAvailable(
+      city: String,
+      requestedFrom: LocalDate,
+      requestedTo: LocalDate,
+      bedrooms: Int
+  ): F[List[AvailablePropertyRecord]] =
+    sql"""
+      select distinct on (p.id)
+        p.id, p.city, p.bedrooms, a.date_from, a.date_to
+      from properties p
+      join availability_periods a on a.property_id = p.id
+      where lower(p.city) = lower($city)
+        and p.bedrooms >= $bedrooms
+        and a.date_from <= $requestedFrom
+        and a.date_to >= $requestedTo
+        and exists (
+          select 1
+          from external_listings l
+          where l.property_id = p.id
+        )
+      order by p.id, a.date_from desc
+    """.query[AvailablePropertyRecord].to[List].transact(xa)
+
   def createListing(listing: ListingRecord): F[ListingRecord] =
     sql"""
       insert into external_listings (id, property_id, platform, url, created_at)
       values (${listing.id}, ${listing.propertyId}, ${listing.platform}, ${listing.url}, ${listing.createdAt})
       returning id, property_id, platform, url, created_at
     """.query[ListingRecord].unique.transact(xa)
+
+  def listingsForProperty(propertyId: UUID): F[List[ListingRecord]] =
+    sql"""
+      select id, property_id, platform, url, created_at
+      from external_listings
+      where property_id = $propertyId
+      order by created_at asc
+    """.query[ListingRecord].to[List].transact(xa)
 
   def listingOwnerProfileId(listingId: UUID): F[Option[UUID]] =
     sql"""
@@ -200,7 +244,7 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
 
   def propertiesForProfile(profileId: UUID): F[List[PropertyRecord]] =
     sql"""
-      select id, profile_id, title, city, created_at
+      select id, profile_id, title, city, bedrooms, created_at
       from properties
       where profile_id = $profileId
       order by created_at asc

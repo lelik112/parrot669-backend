@@ -81,6 +81,33 @@ final class Routes[F[_]: Async](service: ParrotService[F], adminToken: String) e
           }
       }
 
+    case request @ POST -> Root / "api" / "properties" / propertyIdRaw / "availability" =>
+      parseUuid(propertyIdRaw) match {
+        case Left(error) => respondError(error)
+        case Right(propertyId) =>
+          decode[AddAvailabilityRequest](request) { body =>
+            val token = header(request, "X-Parrot-Token")
+            service
+              .addAvailability(propertyId, token, body)
+              .flatMap(result => respond(result, created = true))
+          }
+      }
+
+    case request @ GET -> Root / "api" / "search" =>
+      val params = request.uri.query.params
+      params.get("bedrooms").flatMap(_.toIntOption) match {
+        case None => respondError(ServiceError.Invalid("bedrooms must be an integer"))
+        case Some(bedrooms) =>
+          service
+            .search(
+              city = params.getOrElse("city", ""),
+              fromRaw = params.getOrElse("from", ""),
+              toRaw = params.getOrElse("to", ""),
+              bedrooms = bedrooms
+            )
+            .flatMap(result => respond(result))
+      }
+
     case request @ POST -> Root / "api" / "properties" / propertyIdRaw / "listings" =>
       parseUuid(propertyIdRaw) match {
         case Left(error) => respondError(error)

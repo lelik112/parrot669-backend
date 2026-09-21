@@ -17,6 +17,7 @@ final case class PropertyRecord(
     profileId: UUID,
     title: String,
     city: String,
+    bedrooms: Int,
     createdAt: OffsetDateTime
 )
 
@@ -26,6 +27,22 @@ final case class ListingRecord(
     platform: String,
     url: String,
     createdAt: OffsetDateTime
+)
+
+final case class AvailabilityRecord(
+    id: UUID,
+    propertyId: UUID,
+    dateFrom: LocalDate,
+    dateTo: LocalDate,
+    createdAt: OffsetDateTime
+)
+
+final case class AvailablePropertyRecord(
+    propertyId: UUID,
+    city: String,
+    bedrooms: Int,
+    dateFrom: LocalDate,
+    dateTo: LocalDate
 )
 
 final case class ChallengeRecord(
@@ -53,8 +70,9 @@ final case class VerificationRecord(
 )
 
 final case class CreateProfileRequest(displayName: String, contact: String)
-final case class CreatePropertyRequest(title: String, city: String)
+final case class CreatePropertyRequest(title: String, city: String, bedrooms: Int)
 final case class AddListingRequest(platform: String, url: String)
+final case class AddAvailabilityRequest(from: String, to: String)
 
 final case class PublicProfile(
     parrotId: String,
@@ -79,6 +97,7 @@ final case class PublicProperty(
     id: String,
     title: String,
     city: String,
+    bedrooms: Int,
     createdAt: String,
     listings: List[PublicListing]
 )
@@ -103,6 +122,7 @@ final case class PropertyCreated(
     id: String,
     title: String,
     city: String,
+    bedrooms: Int,
     createdAt: String
 )
 
@@ -112,6 +132,23 @@ final case class ListingCreated(
     platform: String,
     url: String,
     createdAt: String
+)
+
+final case class AvailabilityCreated(
+    id: String,
+    propertyId: String,
+    from: String,
+    to: String,
+    createdAt: String
+)
+
+final case class SearchResult(
+    propertyId: String,
+    city: String,
+    bedrooms: Int,
+    availableFrom: String,
+    availableTo: String,
+    links: List[PublicListing]
 )
 
 final case class ChallengeCreated(
