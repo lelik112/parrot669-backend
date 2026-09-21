@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: parrot669
+      POSTGRES_USER: parrot
+      POSTGRES_PASSWORD: parrot
+    ports:
+      - "5432:5432"
+    volumes:
+      - parrot669_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U parrot -d parrot669"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  parrot669_pgdata:

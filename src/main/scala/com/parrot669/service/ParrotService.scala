@@ -1,0 +1,341 @@
+package com.parrot669.service
+
+import cats.effect.{Async, Clock}
+import cats.syntax.all._
+import com.parrot669.domain._
+import com.parrot669.repo.ParrotRepository
+
+import java.net.URI
+import java.nio.charset.StandardCharsets
+import java.security.{MessageDigest, SecureRandom}
+import java.time.{OffsetDateTime, ZoneId, ZoneOffset}
+import java.util.{Base64, UUID}
+import scala.util.Try
+
+sealed trait ServiceError {
+  def message: String
+}
+object ServiceError {
+  final case class Invalid(message: String) extends ServiceError
+  final case class NotFound(message: String) extends ServiceError
+  final case class Unauthorized(message: String = "invalid or missing edit token") extends ServiceError
+  final case class Conflict(message: String) extends ServiceError
+}
+
+final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
+  import ServiceError._
+
+  private val random = new SecureRandom()
+  private val parrotAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+  private val barcelonaZone = ZoneId.of("Europe/Madrid")
+
+  private def now: F[OffsetDateTime] =
+    Clock[F].realTimeInstant.map(_.atOffset(ZoneOffset.UTC))
+
+  private def uuid: F[UUID] =
+    Async[F].delay(UUID.randomUUID())
+
+  private def normalized(value: String): String =
+    Option(value).fold("")(_.trim)
+
+  private def fail[A](error: ServiceError): F[Either[ServiceError, A]] =
+    Async[F].pure(Left(error))
+
+  private def randomParrotId: F[String] =
+    Async[F].delay {
+      val suffix = (1 to 8).map { _ =>
+        parrotAlphabet.charAt(random.nextInt(parrotAlphabet.length))
+      }.mkString
+      s"P669-$suffix"
+    }
+
+  private def randomEditToken: F[String] =
+    Async[F].delay {
+      val bytes = new Array[Byte](32)
+      random.nextBytes(bytes)
+      Base64.getUrlEncoder.withoutPadding().encodeToString(bytes)
+    }
+
+  private def tokenHash(raw: String): String = {
+    val bytes = MessageDigest
+      .getInstance("SHA-256")
+      .digest(raw.getBytes(StandardCharsets.UTF_8))
+    bytes.iterator.map(b => f"${b & 0xff}%02x").mkString
+  }
+
+  private def tokenMatches(raw: String, storedHash: String): Boolean = {
+    val candidate = tokenHash(raw).getBytes(StandardCharsets.UTF_8)
+    val stored = storedHash.getBytes(StandardCharsets.UTF_8)
+    MessageDigest.isEqual(candidate, stored)
+  }
+
+  private def validateProfile(req: CreateProfileRequest): Either[ServiceError, Unit] = {
+    val name = normalized(req.displayName)
+    val contact = normalized(req.contact)
+
+    if (name.isEmpty) Left(Invalid("displayName is required"))
+    else if (name.length > 120) Left(Invalid("displayName is too long"))
+    else if (contact.isEmpty) Left(Invalid("contact is required"))
+    else if (contact.length > 200) Left(Invalid("contact is too long"))
+    else Right(())
+  }
+
+  private def validateProperty(req: CreatePropertyRequest): Either[ServiceError, Unit] = {
+    val title = normalized(req.title)
+    val city = normalized(req.city)
+
+    if (title.isEmpty) Left(Invalid("title is required"))
+    else if (title.length > 160) Left(Invalid("title is too long"))
+    else if (city.isEmpty) Left(Invalid("city is required"))
+    else if (city.length > 120) Left(Invalid("city is too long"))
+    else Right(())
+  }
+
+  private def isAirbnbUrl(raw: String): Boolean =
+    Try(new URI(raw)).toOption.exists { uri =>
+      val host = Option(uri.getHost).fold("")(_.toLowerCase)
+      uri.getScheme == "https" && host.matches("(^|.*\\.)airbnb\\.[a-z.]+$")
+    }
+
+  private def validateListing(req: AddListingRequest): Either[ServiceError, Unit] = {
+    val platform = normalized(req.platform).toLowerCase
+    val url = normalized(req.url)
+
+    if (platform != "airbnb") Left(Invalid("only airbnb is supported in v0"))
+    else if (!isAirbnbUrl(url)) Left(Invalid("url must be an https Airbnb URL"))
+    else Right(())
+  }
+
+  private def authorize(profileId: UUID, editToken: String): F[Either[ServiceError, Unit]] =
+    if (normalized(editToken).isEmpty) fail[Unit](Unauthorized())
+    else
+      repo.findProfile(profileId).map {
+        case None => Left[ServiceError, Unit](NotFound("profile not found"))
+        case Some(profile) if tokenMatches(editToken, profile.accessTokenHash) =>
+          Right[ServiceError, Unit](())
+        case Some(_) => Left[ServiceError, Unit](Unauthorized())
+      }
+
+  def health: F[Boolean] = repo.health
+
+  def createProfile(req: CreateProfileRequest): F[Either[ServiceError, ProfileCreated]] =
+    validateProfile(req) match {
+      case Left(error) => fail[ProfileCreated](error)
+      case Right(_) =>
+        for {
+          id <- uuid
+          parrotId <- randomParrotId
+          rawToken <- randomEditToken
+          createdAt <- now
+          record = ProfileRecord(
+            id = id,
+            parrotId = parrotId,
+            displayName = normalized(req.displayName),
+            contact = normalized(req.contact),
+            accessTokenHash = tokenHash(rawToken),
+            createdAt = createdAt
+          )
+          saved <- repo.createProfile(record)
+        } yield ProfileCreated(
+          id = saved.id.toString,
+          profile = PublicProfile(
+            parrotId = saved.parrotId,
+            displayName = saved.displayName,
+            createdAt = saved.createdAt.toString
+          ),
+          editToken = rawToken
+        ).asRight[ServiceError]
+    }
+
+  def createProperty(
+      profileId: UUID,
+      editToken: String,
+      req: CreatePropertyRequest
+  ): F[Either[ServiceError, PropertyCreated]] =
+    validateProperty(req) match {
+      case Left(error) => fail[PropertyCreated](error)
+      case Right(_) =>
+        authorize(profileId, editToken).flatMap {
+          case Left(error) => fail[PropertyCreated](error)
+          case Right(_) =>
+            for {
+              id <- uuid
+              createdAt <- now
+              saved <- repo.createProperty(
+                PropertyRecord(
+                  id = id,
+                  profileId = profileId,
+                  title = normalized(req.title),
+                  city = normalized(req.city),
+                  createdAt = createdAt
+                )
+              )
+            } yield PropertyCreated(
+              id = saved.id.toString,
+              title = saved.title,
+              city = saved.city,
+              createdAt = saved.createdAt.toString
+            ).asRight[ServiceError]
+        }
+    }
+
+  def addListing(
+      propertyId: UUID,
+      editToken: String,
+      req: AddListingRequest
+  ): F[Either[ServiceError, ListingCreated]] =
+    validateListing(req) match {
+      case Left(error) => fail[ListingCreated](error)
+      case Right(_) =>
+        repo.propertyOwnerProfileId(propertyId).flatMap {
+          case None => fail[ListingCreated](NotFound("property not found"))
+          case Some(profileId) =>
+            authorize(profileId, editToken).flatMap {
+              case Left(error) => fail[ListingCreated](error)
+              case Right(_) =>
+                for {
+                  id <- uuid
+                  createdAt <- now
+                  saved <- repo.createListing(
+                    ListingRecord(
+                      id = id,
+                      propertyId = propertyId,
+                      platform = "airbnb",
+                      url = normalized(req.url),
+                      createdAt = createdAt
+                    )
+                  )
+                } yield ListingCreated(
+                  id = saved.id.toString,
+                  propertyId = saved.propertyId.toString,
+                  platform = saved.platform,
+                  url = saved.url,
+                  createdAt = saved.createdAt.toString
+                ).asRight[ServiceError]
+            }
+        }
+    }
+
+  def createCalendarChallenge(
+      listingId: UUID,
+      editToken: String
+  ): F[Either[ServiceError, ChallengeCreated]] =
+    repo.listingOwnerProfileId(listingId).flatMap {
+      case None => fail[ChallengeCreated](NotFound("listing not found"))
+      case Some(profileId) =>
+        authorize(profileId, editToken).flatMap {
+          case Left(error) => fail[ChallengeCreated](error)
+          case Right(_) =>
+            for {
+              current <- now
+              _ <- repo.expireOldChallenges(listingId, current)
+              active <- repo.hasActiveChallenge(listingId, current)
+              result <-
+                if (active)
+                  fail[ChallengeCreated](Conflict("listing already has an active challenge"))
+                else
+                  for {
+                    id <- uuid
+                    offset <- Async[F].delay(random.nextInt(45) + 21)
+                    startDate = current.atZoneSameInstant(barcelonaZone).toLocalDate.plusDays(offset.toLong)
+                    challenge = ChallengeRecord(
+                      id = id,
+                      listingId = listingId,
+                      kind = "calendar_block",
+                      blockDate1 = startDate,
+                      blockDate2 = startDate.plusDays(2),
+                      leaveAvailableDate = startDate.plusDays(1),
+                      status = "pending",
+                      createdAt = current,
+                      expiresAt = current.plusHours(2),
+                      verifiedAt = None
+                    )
+                    saved <- repo.createChallenge(challenge)
+                  } yield ChallengeCreated(
+                    id = saved.id.toString,
+                    listingId = saved.listingId.toString,
+                    kind = saved.kind,
+                    blockDates = List(saved.blockDate1.toString, saved.blockDate2.toString),
+                    leaveAvailable = List(saved.leaveAvailableDate.toString),
+                    expiresAt = saved.expiresAt.toString,
+                    status = saved.status
+                  ).asRight[ServiceError]
+            } yield result
+        }
+    }
+
+  def markChallengePassed(challengeId: UUID): F[Either[ServiceError, VerificationCreated]] =
+    for {
+      verificationId <- uuid
+      verifiedAt <- now
+      completed <- repo.completeCalendarChallenge(
+        challengeId = challengeId,
+        verificationId = verificationId,
+        verifiedAt = verifiedAt,
+        verificationExpiresAt = verifiedAt.plusDays(30)
+      )
+    } yield completed
+      .leftMap {
+        case "challenge not found" => NotFound("challenge not found"): ServiceError
+        case other => Conflict(other): ServiceError
+      }
+      .map { saved =>
+        VerificationCreated(
+          id = saved.id.toString,
+          listingId = saved.listingId.map(_.toString),
+          claim = saved.claim,
+          method = saved.method,
+          verifiedAt = saved.verifiedAt.toString,
+          expiresAt = saved.expiresAt.map(_.toString)
+        )
+      }
+
+  def publicProfile(parrotId: String): F[Either[ServiceError, PublicProfilePage]] =
+    repo.findProfileByParrotId(normalized(parrotId)).flatMap {
+      case None => fail[PublicProfilePage](NotFound("profile not found"))
+      case Some(profile) =>
+        (repo.propertiesForProfile(profile.id), repo.listingsForProfile(profile.id), repo.verificationsForProfile(profile.id), now)
+          .mapN { (properties, listings, verifications, current) =>
+            val publicProperties = properties.map { property =>
+              PublicProperty(
+                id = property.id.toString,
+                title = property.title,
+                city = property.city,
+                createdAt = property.createdAt.toString,
+                listings = listings
+                  .filter(_.propertyId == property.id)
+                  .map { listing =>
+                    PublicListing(
+                      id = listing.id.toString,
+                      platform = listing.platform,
+                      url = listing.url,
+                      createdAt = listing.createdAt.toString
+                    )
+                  }
+              )
+            }
+
+            val publicVerifications = verifications.map { verification =>
+              PublicVerification(
+                id = verification.id.toString,
+                listingId = verification.listingId.map(_.toString),
+                claim = verification.claim,
+                method = verification.method,
+                verifiedAt = verification.verifiedAt.toString,
+                expiresAt = verification.expiresAt.map(_.toString),
+                active = verification.expiresAt.forall(_.isAfter(current))
+              )
+            }
+
+            PublicProfilePage(
+              profile = PublicProfile(
+                parrotId = profile.parrotId,
+                displayName = profile.displayName,
+                createdAt = profile.createdAt.toString
+              ),
+              properties = publicProperties,
+              verifications = publicVerifications
+            ).asRight[ServiceError]
+          }
+    }
+}
