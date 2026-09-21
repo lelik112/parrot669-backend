@@ -42,6 +42,7 @@ final case class AvailabilityRecord(
 
 final case class AvailablePropertyRecord(
     propertyId: UUID,
+    ownerDisplayName: String,
     city: String,
     bedrooms: Int,
     sleeps: Int,
@@ -155,6 +156,7 @@ final case class AvailabilityCreated(
 
 final case class SearchResult(
     propertyId: String,
+    ownerDisplayName: String,
     city: String,
     bedrooms: Int,
     sleeps: Int,

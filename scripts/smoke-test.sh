@@ -130,6 +130,7 @@ minimum_stay = json.loads(os.environ["MINIMUM_STAY_JSON"])
 assert len(results) == 1, results
 result = results[0]
 assert result["propertyId"] == property_id, result
+assert result["ownerDisplayName"] == "CI Host", result
 assert result["city"] == "Barcelona", result
 assert result["bedrooms"] == 2, result
 assert result["sleeps"] == 5, result
@@ -214,4 +215,32 @@ data = json.loads(os.environ["VERIFICATION_JSON"])
 assert data["claim"] == "controls_listing", data
 assert data["method"] == "calendar_challenge", data
 print("Verification response passed")
+PY
+
+wrong_listing_delete_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   -X DELETE "http://localhost:$HTTP_PORT/api/listings/$listing_id"   -H 'X-Parrot-Token: definitely-wrong-token')
+
+test "$wrong_listing_delete_status" = "401"
+
+curl --fail --silent   -X DELETE "http://localhost:$HTTP_PORT/api/listings/$listing_id"   -H "X-Parrot-Token: $edit_token"   --output /dev/null
+
+after_listing_delete_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/p/$parrot_id")
+AFTER_LISTING_DELETE_JSON="$after_listing_delete_json" python3 - <<'PY'
+import json, os
+data = json.loads(os.environ["AFTER_LISTING_DELETE_JSON"])
+assert data["properties"][0]["listings"] == [], data
+print("External listing deletion passed")
+PY
+
+wrong_property_delete_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   -X DELETE "http://localhost:$HTTP_PORT/api/properties/$property_id"   -H 'X-Parrot-Token: definitely-wrong-token')
+
+test "$wrong_property_delete_status" = "401"
+
+curl --fail --silent   -X DELETE "http://localhost:$HTTP_PORT/api/properties/$property_id"   -H "X-Parrot-Token: $edit_token"   --output /dev/null
+
+after_property_delete_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/p/$parrot_id")
+AFTER_PROPERTY_DELETE_JSON="$after_property_delete_json" python3 - <<'PY'
+import json, os
+data = json.loads(os.environ["AFTER_PROPERTY_DELETE_JSON"])
+assert data["properties"] == [], data
+print("Property deletion passed")
 PY

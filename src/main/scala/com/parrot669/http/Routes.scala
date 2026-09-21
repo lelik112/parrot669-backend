@@ -81,6 +81,17 @@ final class Routes[F[_]: Async](service: ParrotService[F], adminToken: String) e
           }
       }
 
+    case request @ DELETE -> Root / "api" / "properties" / propertyIdRaw =>
+      parseUuid(propertyIdRaw) match {
+        case Left(error) => respondError(error)
+        case Right(propertyId) =>
+          val token = header(request, "X-Parrot-Token")
+          service.deleteProperty(propertyId, token).flatMap {
+            case Right(_)    => NoContent()
+            case Left(error) => respondError(error)
+          }
+      }
+
     case request @ GET -> Root / "api" / "properties" / propertyIdRaw / "availability" =>
       parseUuid(propertyIdRaw) match {
         case Left(error) => respondError(error)
@@ -153,6 +164,17 @@ final class Routes[F[_]: Async](service: ParrotService[F], adminToken: String) e
             service
               .addListing(propertyId, token, body)
               .flatMap(result => respond(result, created = true))
+          }
+      }
+
+    case request @ DELETE -> Root / "api" / "listings" / listingIdRaw =>
+      parseUuid(listingIdRaw) match {
+        case Left(error) => respondError(error)
+        case Right(listingId) =>
+          val token = header(request, "X-Parrot-Token")
+          service.deleteListing(listingId, token).flatMap {
+            case Right(_)    => NoContent()
+            case Left(error) => respondError(error)
           }
       }
 

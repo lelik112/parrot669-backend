@@ -85,12 +85,9 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
 
   private def validateProperty(req: CreatePropertyRequest): Either[ServiceError, Unit] = {
     val title = normalized(req.title)
-    val city = normalized(req.city)
-
     if (title.isEmpty) Left(Invalid("title is required"))
     else if (title.length > 160) Left(Invalid("title is too long"))
-    else if (city.isEmpty) Left(Invalid("city is required"))
-    else if (city.length > 120) Left(Invalid("city is too long"))
+    else if (!normalized(req.city).equalsIgnoreCase("Barcelona")) Left(Invalid("only Barcelona is supported right now"))
     else if (req.bedrooms < 1 || req.bedrooms > 20) Left(Invalid("bedrooms must be between 1 and 20"))
     else if (req.sleeps < 1 || req.sleeps > 40) Left(Invalid("sleeps must be between 1 and 40"))
     else if (req.minStayDays < 1 || req.minStayDays > 365) Left(Invalid("minStayDays must be between 1 and 365"))
@@ -187,7 +184,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
                   id = id,
                   profileId = profileId,
                   title = normalized(req.title),
-                  city = normalized(req.city),
+                  city = "Barcelona",
                   bedrooms = req.bedrooms,
                   sleeps = req.sleeps,
                   minStayDays = req.minStayDays,
@@ -203,6 +200,23 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
               minStayDays = saved.minStayDays,
               createdAt = saved.createdAt.toString
             ).asRight[ServiceError]
+        }
+    }
+
+  def deleteProperty(
+      propertyId: UUID,
+      editToken: String
+  ): F[Either[ServiceError, Unit]] =
+    repo.propertyOwnerProfileId(propertyId).flatMap {
+      case None => fail[Unit](NotFound("property not found"))
+      case Some(profileId) =>
+        authorize(profileId, editToken).flatMap {
+          case Left(error) => fail[Unit](error)
+          case Right(_) =>
+            repo.deleteProperty(propertyId).flatMap {
+              case true  => Async[F].pure(Right[ServiceError, Unit](()))
+              case false => fail[Unit](NotFound("property not found"))
+            }
         }
     }
 
@@ -316,7 +330,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
   ): F[Either[ServiceError, List[SearchResult]]] = {
     val validated =
       for {
-        _ <- Either.cond(normalized(city).nonEmpty, (), Invalid("city is required"))
+        _ <- Either.cond(normalized(city).equalsIgnoreCase("Barcelona"), (), Invalid("only Barcelona is supported right now"))
         from <- parseDate(fromRaw, "from")
         to <- parseDate(toRaw, "to")
         _ <- Either.cond(!to.isBefore(from), (), Invalid("to must be on or after from"))
@@ -328,11 +342,12 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
     validated match {
       case Left(error) => fail[List[SearchResult]](error)
       case Right((from, to, stayDays)) =>
-        repo.searchAvailable(normalized(city), from, to, bedrooms, sleeps, stayDays).flatMap { matches =>
+        repo.searchAvailable(from, to, bedrooms, sleeps, stayDays).flatMap { matches =>
           matches.traverse { item =>
             repo.listingsForProperty(item.propertyId).map { listings =>
               SearchResult(
                 propertyId = item.propertyId.toString,
+                ownerDisplayName = item.ownerDisplayName,
                 city = item.city,
                 bedrooms = item.bedrooms,
                 sleeps = item.sleeps,
@@ -382,6 +397,23 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F]) {
                   url = saved.url,
                   createdAt = saved.createdAt.toString
                 ).asRight[ServiceError]
+            }
+        }
+    }
+
+  def deleteListing(
+      listingId: UUID,
+      editToken: String
+  ): F[Either[ServiceError, Unit]] =
+    repo.listingOwnerProfileId(listingId).flatMap {
+      case None => fail[Unit](NotFound("listing not found"))
+      case Some(profileId) =>
+        authorize(profileId, editToken).flatMap {
+          case Left(error) => fail[Unit](error)
+          case Right(_) =>
+            repo.deleteListing(listingId).flatMap {
+              case true  => Async[F].pure(Right[ServiceError, Unit](()))
+              case false => fail[Unit](NotFound("listing not found"))
             }
         }
     }

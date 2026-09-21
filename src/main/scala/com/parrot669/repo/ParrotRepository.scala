@@ -56,6 +56,13 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
       .option
       .transact(xa)
 
+  def deleteProperty(propertyId: UUID): F[Boolean] =
+    sql"delete from properties where id = $propertyId"
+      .update
+      .run
+      .map(_ == 1)
+      .transact(xa)
+
   def createAvailability(availability: AvailabilityRecord): F[AvailabilityRecord] =
     sql"""
       insert into availability_periods (id, property_id, date_from, date_to, created_at)
@@ -102,7 +109,6 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
       .transact(xa)
 
   def searchAvailable(
-      city: String,
       requestedFrom: LocalDate,
       requestedTo: LocalDate,
       bedrooms: Int,
@@ -111,10 +117,11 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
   ): F[List[AvailablePropertyRecord]] =
     sql"""
       select distinct on (p.id)
-        p.id, p.city, p.bedrooms, p.sleeps, p.min_stay_days, a.date_from, a.date_to
+        p.id, pr.display_name, p.city, p.bedrooms, p.sleeps, p.min_stay_days, a.date_from, a.date_to
       from properties p
+      join profiles pr on pr.id = p.profile_id
       join availability_periods a on a.property_id = p.id
-      where lower(p.city) = lower($city)
+      where p.city_code = 'barcelona'
         and p.bedrooms >= $bedrooms
         and p.sleeps >= $sleeps
         and p.min_stay_days <= $stayDays
@@ -150,6 +157,13 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
       join properties p on p.id = l.property_id
       where l.id = $listingId
     """.query[UUID].option.transact(xa)
+
+  def deleteListing(listingId: UUID): F[Boolean] =
+    sql"delete from external_listings where id = $listingId"
+      .update
+      .run
+      .map(_ == 1)
+      .transact(xa)
 
   def expireOldChallenges(listingId: UUID, now: OffsetDateTime): F[Int] =
     sql"""
