@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  compile-and-smoke:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: parrot669
+          POSTGRES_USER: parrot
+          POSTGRES_PASSWORD: parrot
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U parrot -d parrot669"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: sbt
+
+      - uses: sbt/setup-sbt@v1
+
+      - name: Compile
+        run: sbt -batch compile
+
+      - name: End-to-end smoke test
+        env:
+          APP_ENV: test
+          HTTP_PORT: "8080"
+          DATABASE_URL: jdbc:postgresql://localhost:5432/parrot669
+          DATABASE_USER: parrot
+          DATABASE_PASSWORD: parrot
+          PARROT_ADMIN_TOKEN: ci-admin-token
+        run: bash scripts/smoke-test.sh
