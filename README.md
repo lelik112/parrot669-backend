@@ -38,7 +38,7 @@ Host Profile + ExternalListing
   └─ Verification(claim = controls_listing)
 ```
 
-`Account` is the login identity. It has a normalized unique email and an Argon2id password hash. A Host Profile is the domain identity shown to guests and owns properties. For the current MVP, one account owns one Host Profile.
+`Account` is the login identity. It has a normalized unique email, an Argon2id password hash and an email-verification timestamp. A Host Profile is the domain identity shown to guests and owns properties. For the current MVP, one account owns one Host Profile.
 
 A profile still gets a human-readable ID like:
 
@@ -48,7 +48,7 @@ P669-K7M2Q8XZ
 
 Owner authorization is ownership-based, not role-based: the authenticated session resolves an Account and its Host Profile, and owner mutations verify that the target resource belongs to that profile. Guest search is public and "host" is not an RBAC role. The existing `PARROT_ADMIN_TOKEN` remains a separate technical mechanism for the internal verification endpoint.
 
-Sessions use opaque 256-bit random tokens in an HttpOnly, SameSite=Lax cookie; production cookies are also Secure. PostgreSQL stores only SHA-256 hashes of session tokens. Sessions expire after 30 days, multiple active sessions are allowed, and logout invalidates the current server-side session.
+New registrations must confirm their email before receiving a session. Email-verification tokens are opaque 256-bit random values, stored only as SHA-256 hashes, expire after 24 hours and are one-time use. A successful verification creates the first session. Sessions use opaque 256-bit random tokens in an HttpOnly, SameSite=Lax cookie; production cookies are also Secure. PostgreSQL stores only SHA-256 hashes of session tokens. Sessions expire after 30 days, multiple active sessions are allowed, and logout invalidates the current server-side session.
 
 ## 1. Start PostgreSQL
 
@@ -102,7 +102,7 @@ The browser frontend uses the same endpoints through the Cloudflare Worker and n
 ### Register
 
 ```bash
-curl -s -c cookies.txt http://localhost:8080/api/auth/register \
+curl -s http://localhost:8080/api/auth/register \
   -H 'content-type: application/json' \
   -d '{
     "email": "alex@example.com",
@@ -111,9 +111,27 @@ curl -s -c cookies.txt http://localhost:8080/api/auth/register \
   }'
 ```
 
-Registration creates the Account, its Host Profile, and a fresh server-side session. The response contains public account/profile metadata, while the raw session token is returned only through `Set-Cookie`.
+Registration returns `202 Accepted` and does not create a session. Production sends a verification email; test/dev without provider credentials logs the verification URL.
 
-Check the current identity:
+The verification link opens `/host.html#verify=<TOKEN>`. The host UI posts the token to:
+
+```bash
+curl -s -c cookies.txt http://localhost:8080/api/auth/verify-email \
+  -H 'content-type: application/json' \
+  -d '{"token":"<TOKEN_FROM_EMAIL>"}'
+```
+
+Successful verification marks the account verified, consumes the token and creates the first session. The token cannot be reused.
+
+Resend uses a deliberately generic response to avoid exposing account existence:
+
+```bash
+curl -s http://localhost:8080/api/auth/resend-verification \
+  -H 'content-type: application/json' \
+  -d '{"email":"alex@example.com"}'
+```
+
+After verification:
 
 ```bash
 curl -s -b cookies.txt http://localhost:8080/api/auth/me
@@ -208,6 +226,8 @@ It intentionally does **not** expose private account credentials, password hashe
 GET  /health
 
 POST /api/auth/register
+POST /api/auth/verify-email
+POST /api/auth/resend-verification
 POST /api/auth/login
 POST /api/auth/logout
 GET  /api/auth/me
@@ -245,7 +265,7 @@ Flyway migrations live in:
 src/main/resources/db/migration/
 ```
 
-The schema is additive through V12. V11 adds `accounts`, server-side `sessions`, account/profile ownership and reserved `password_reset_tokens` storage. V12 removes the pre-account edit-token mechanism, deletes any remaining unowned legacy profiles, makes `profiles.account_id` mandatory and drops `access_token_hash`.
+The schema is additive through V13. V11 adds `accounts`, server-side `sessions`, account/profile ownership and reserved `password_reset_tokens` storage. V12 removes the pre-account edit-token mechanism. V13 adds `accounts.email_verified_at` and hashed, expiring, one-time email-verification tokens; existing accounts are grandfathered as verified.
 
 Do not rewrite already-applied migrations. Flyway remembers checksums and will quite reasonably complain when humans attempt time travel.
 
@@ -271,7 +291,7 @@ This shape is convenient for Railway/Fly.io/a small VM. Point `DATABASE_URL`, `D
 
 ## What is intentionally not here yet
 
-- password-reset email delivery (the V11 reset-token table is reserved, but no fake recovery flow is exposed);
+- password-reset request/confirm endpoints (the V11 reset-token table is reserved and can reuse the transactional email sender);
 - OAuth;
 - general RBAC/roles;
 - messaging;
@@ -285,7 +305,7 @@ This shape is convenient for Railway/Fly.io/a small VM. Point `DATABASE_URL`, `D
 
 ## Next sensible backend steps
 
-1. Connect a real email provider and add password-reset request/confirm endpoints.
+1. Add password-reset request/confirm endpoints using the existing transactional email sender.
 2. Add `identity` and `right_to_rent` as separate claims, never as a generic `verified=true`.
 3. Add an admin UI or tiny internal endpoint to list pending challenges.
 4. Replace the simple in-process login limiter only if traffic or horizontal scaling makes a distributed limiter worth the complexity.
