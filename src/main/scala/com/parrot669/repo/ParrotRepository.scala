@@ -42,12 +42,16 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
 
   def createProperty(property: PropertyRecord): F[PropertyRecord] =
     sql"""
-      insert into properties (id, profile_id, title, city, city_code, bedrooms, sleeps, min_stay_days, created_at)
+      insert into properties (
+        id, profile_id, title, city, city_code, accommodation_type,
+        bedrooms, sleeps, min_stay_days, created_at
+      )
       values (
         ${property.id}, ${property.profileId}, ${property.title},
-        ${property.city}, 'barcelona', ${property.bedrooms}, ${property.sleeps}, ${property.minStayDays}, ${property.createdAt}
+        ${property.city}, 'barcelona', ${property.accommodationType},
+        ${property.bedrooms}, ${property.sleeps}, ${property.minStayDays}, ${property.createdAt}
       )
-      returning id, profile_id, title, city, bedrooms, sleeps, min_stay_days, created_at
+      returning id, profile_id, title, city, accommodation_type, bedrooms, sleeps, min_stay_days, created_at
     """.query[PropertyRecord].unique.transact(xa)
 
   def propertyOwnerProfileId(propertyId: UUID): F[Option[UUID]] =
@@ -148,6 +152,7 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
       bedrooms: Int,
       sleeps: Int,
       stayDays: Int,
+      accommodationType: Option[String],
       pricedOnly: Boolean
   ): F[List[AvailablePropertyRecord]] =
     sql"""
@@ -157,6 +162,7 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
           p.title,
           pr.display_name,
           p.city,
+          p.accommodation_type,
           p.bedrooms,
           p.sleeps,
           p.min_stay_days
@@ -166,11 +172,7 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
           and p.bedrooms >= $bedrooms
           and p.sleeps >= $sleeps
           and p.min_stay_days <= $stayDays
-          and exists (
-            select 1
-            from external_listings l
-            where l.property_id = p.id
-          )
+          and p.accommodation_type = coalesce($accommodationType, p.accommodation_type)
       ),
       nights as (
         select generate_series(
@@ -185,6 +187,7 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
           c.title,
           c.display_name,
           c.city,
+          c.accommodation_type,
           c.bedrooms,
           c.sleeps,
           c.min_stay_days,
@@ -213,7 +216,7 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
          and a.date_from <= n.night
          and a.date_to > n.night
         group by
-          c.id, c.title, c.display_name, c.city,
+          c.id, c.title, c.display_name, c.city, c.accommodation_type,
           c.bedrooms, c.sleeps, c.min_stay_days, n.night
       ),
       rolled as (
@@ -222,6 +225,7 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
           title,
           display_name,
           city,
+          accommodation_type,
           bedrooms,
           sleeps,
           min_stay_days,
@@ -232,13 +236,14 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
             else null
           end as nightly_total_cents
         from night_coverage
-        group by id, title, display_name, city, bedrooms, sleeps, min_stay_days
+        group by id, title, display_name, city, accommodation_type, bedrooms, sleeps, min_stay_days
       )
       select
         id,
         title,
         display_name,
         city,
+        accommodation_type,
         bedrooms,
         sleeps,
         min_stay_days,
@@ -545,7 +550,7 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
 
   def propertiesForProfile(profileId: UUID): F[List[PropertyRecord]] =
     sql"""
-      select id, profile_id, title, city, bedrooms, sleeps, min_stay_days, created_at
+      select id, profile_id, title, city, accommodation_type, bedrooms, sleeps, min_stay_days, created_at
       from properties
       where profile_id = $profileId
       order by created_at asc

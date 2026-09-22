@@ -160,6 +160,7 @@ final class Routes[F[_]: Async](service: ParrotService[F], adminToken: String) e
               toRaw = params.getOrElse("to", ""),
               bedrooms = bedroomCount,
               sleeps = sleepCount,
+              accommodationTypeRaw = params.get("accommodationType"),
               pricedOnly = pricedOnly
             )
             .flatMap(result => respond(result))

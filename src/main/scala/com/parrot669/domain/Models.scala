@@ -17,6 +17,7 @@ final case class PropertyRecord(
     profileId: UUID,
     title: String,
     city: String,
+    accommodationType: String,
     bedrooms: Int,
     sleeps: Int,
     minStayDays: Int,
@@ -47,6 +48,7 @@ final case class AvailablePropertyRecord(
     propertyTitle: String,
     ownerDisplayName: String,
     city: String,
+    accommodationType: String,
     bedrooms: Int,
     sleeps: Int,
     minStayDays: Int,
@@ -103,7 +105,14 @@ final case class VerificationRecord(
 )
 
 final case class CreateProfileRequest(displayName: String, contact: String)
-final case class CreatePropertyRequest(title: String, city: String, bedrooms: Int, sleeps: Int, minStayDays: Int)
+final case class CreatePropertyRequest(
+    title: String,
+    city: String,
+    accommodationType: Option[String],
+    bedrooms: Int,
+    sleeps: Int,
+    minStayDays: Int
+)
 final case class AddListingRequest(platform: String, externalId: String, cleaningFeeCents: Option[Long])
 final case class UpdateListingRequest(cleaningFeeCents: Option[Long])
 final case class AddAvailabilityRequest(from: String, to: String, nightlyPriceCents: Option[Long])
@@ -134,6 +143,7 @@ final case class PublicProperty(
     id: String,
     title: String,
     city: String,
+    accommodationType: String,
     bedrooms: Int,
     sleeps: Int,
     minStayDays: Int,
@@ -179,6 +189,7 @@ final case class HostProperty(
     id: String,
     title: String,
     city: String,
+    accommodationType: String,
     bedrooms: Int,
     sleeps: Int,
     minStayDays: Int,
@@ -197,6 +208,7 @@ final case class PropertyCreated(
     id: String,
     title: String,
     city: String,
+    accommodationType: String,
     bedrooms: Int,
     sleeps: Int,
     minStayDays: Int,
@@ -235,6 +247,7 @@ final case class SearchResult(
     propertyTitle: String,
     ownerDisplayName: String,
     city: String,
+    accommodationType: String,
     bedrooms: Int,
     sleeps: Int,
     minStayDays: Int,

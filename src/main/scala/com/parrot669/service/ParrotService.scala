@@ -29,6 +29,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
   private val random = new SecureRandom()
   private val parrotAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
   private val barcelonaZone = ZoneId.of("Europe/Madrid")
+  private val accommodationTypes = Set("entire_place", "private_room")
 
   private def now: F[OffsetDateTime] =
     Clock[F].realTimeInstant.map(_.atOffset(ZoneOffset.UTC))
@@ -73,6 +74,16 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
   private def parseDate(raw: String, field: String): Either[ServiceError, LocalDate] =
     Try(LocalDate.parse(normalized(raw))).toEither.leftMap(_ => Invalid(s"$field must be YYYY-MM-DD"))
 
+  private def propertyAccommodationType(raw: Option[String]): String =
+    raw.map(value => normalized(value).toLowerCase).filter(_.nonEmpty).getOrElse("entire_place")
+
+  private def searchAccommodationType(raw: Option[String]): Either[ServiceError, Option[String]] =
+    raw.map(value => normalized(value).toLowerCase).filter(_.nonEmpty) match {
+      case None | Some("any") => Right(None)
+      case Some(value) if accommodationTypes.contains(value) => Right(Some(value))
+      case Some(_) => Left(Invalid("accommodationType must be entire_place or private_room"))
+    }
+
   private def validateProfile(req: CreateProfileRequest): Either[ServiceError, Unit] = {
     val name = normalized(req.displayName)
     val contact = normalized(req.contact)
@@ -86,9 +97,12 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
 
   private def validateProperty(req: CreatePropertyRequest): Either[ServiceError, Unit] = {
     val title = normalized(req.title)
+    val accommodationType = propertyAccommodationType(req.accommodationType)
     if (title.isEmpty) Left(Invalid("title is required"))
     else if (title.length > 160) Left(Invalid("title is too long"))
     else if (!normalized(req.city).equalsIgnoreCase("Barcelona")) Left(Invalid("only Barcelona is supported right now"))
+    else if (!accommodationTypes.contains(accommodationType))
+      Left(Invalid("accommodationType must be entire_place or private_room"))
     else if (req.bedrooms < 1 || req.bedrooms > 20) Left(Invalid("bedrooms must be between 1 and 20"))
     else if (req.sleeps < 1 || req.sleeps > 40) Left(Invalid("sleeps must be between 1 and 40"))
     else if (req.minStayDays < 1 || req.minStayDays > 365) Left(Invalid("minStayDays must be between 1 and 365"))
@@ -267,6 +281,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
                   profileId = profileId,
                   title = normalized(req.title),
                   city = "Barcelona",
+                  accommodationType = propertyAccommodationType(req.accommodationType),
                   bedrooms = req.bedrooms,
                   sleeps = req.sleeps,
                   minStayDays = req.minStayDays,
@@ -277,6 +292,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
               id = saved.id.toString,
               title = saved.title,
               city = saved.city,
+              accommodationType = saved.accommodationType,
               bedrooms = saved.bedrooms,
               sleeps = saved.sleeps,
               minStayDays = saved.minStayDays,
@@ -412,6 +428,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
       toRaw: String,
       bedrooms: Int,
       sleeps: Int,
+      accommodationTypeRaw: Option[String],
       pricedOnly: Boolean
   ): F[Either[ServiceError, List[SearchResult]]] = {
     val validated =
@@ -422,13 +439,14 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
         _ <- Either.cond(to.isAfter(from), (), Invalid("to must be after from; checkout date is exclusive"))
         _ <- Either.cond(bedrooms >= 1 && bedrooms <= 20, (), Invalid("bedrooms must be between 1 and 20"))
         _ <- Either.cond(sleeps >= 1 && sleeps <= 40, (), Invalid("sleeps must be between 1 and 40"))
+        accommodationType <- searchAccommodationType(accommodationTypeRaw)
         stayDays = ChronoUnit.DAYS.between(from, to).toInt
-      } yield (from, to, stayDays)
+      } yield (from, to, stayDays, accommodationType)
 
     validated match {
       case Left(error) => fail[List[SearchResult]](error)
-      case Right((from, to, stayDays)) =>
-        repo.searchAvailable(from, to, bedrooms, sleeps, stayDays, pricedOnly).flatMap { matches =>
+      case Right((from, to, stayDays, accommodationType)) =>
+        repo.searchAvailable(from, to, bedrooms, sleeps, stayDays, accommodationType, pricedOnly).flatMap { matches =>
           matches.traverse { item =>
             repo.listingsForProperty(item.propertyId).map { listings =>
               val primaryListing = listings.find(_.platform == "airbnb").orElse(listings.headOption)
@@ -448,6 +466,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
                 propertyTitle = item.propertyTitle,
                 ownerDisplayName = item.ownerDisplayName,
                 city = item.city,
+                accommodationType = item.accommodationType,
                 bedrooms = item.bedrooms,
                 sleeps = item.sleeps,
                 minStayDays = item.minStayDays,
@@ -732,6 +751,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
                     id = property.id.toString,
                     title = property.title,
                     city = property.city,
+                    accommodationType = property.accommodationType,
                     bedrooms = property.bedrooms,
                     sleeps = property.sleeps,
                     minStayDays = property.minStayDays,
@@ -765,6 +785,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
                 id = property.id.toString,
                 title = property.title,
                 city = property.city,
+                accommodationType = property.accommodationType,
                 bedrooms = property.bedrooms,
                 sleeps = property.sleeps,
                 minStayDays = property.minStayDays,
