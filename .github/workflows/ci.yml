@@ -53,3 +53,27 @@ jobs:
 
       - name: Build deployment image
         run: docker build -t parrot669-backend:ci .
+
+      - name: Production auth smoke
+        run: |
+          set -euo pipefail
+
+          me_status=$(curl -sS -o /tmp/auth-me-body -w '%{http_code}' https://api.parrot669.com/api/auth/me)
+          test "$me_status" = "401"
+
+          logout_status=$(curl -sS -D /tmp/logout-headers -o /dev/null -w '%{http_code}' -X POST https://api.parrot669.com/api/auth/logout)
+          test "$logout_status" = "204"
+          grep -Eqi '^set-cookie: parrot_session=' /tmp/logout-headers
+          grep -Eqi '^set-cookie: .*HttpOnly' /tmp/logout-headers
+          grep -Eqi '^set-cookie: .*Secure' /tmp/logout-headers
+          grep -Eqi '^set-cookie: .*SameSite=Lax' /tmp/logout-headers
+
+          worker_me_status=$(curl -sS -o /tmp/worker-me-body -w '%{http_code}' https://parrot669.com/api/host/auth/me)
+          test "$worker_me_status" = "401"
+
+          worker_logout_status=$(curl -sS -D /tmp/worker-logout-headers -o /dev/null -w '%{http_code}' -X POST https://parrot669.com/api/host/auth/logout -H 'Origin: https://parrot669.com')
+          test "$worker_logout_status" = "204"
+          grep -Eqi '^set-cookie: parrot_session=' /tmp/worker-logout-headers
+          grep -Eqi '^set-cookie: .*HttpOnly' /tmp/worker-logout-headers
+          grep -Eqi '^set-cookie: .*Secure' /tmp/worker-logout-headers
+          grep -Eqi '^set-cookie: .*SameSite=Lax' /tmp/worker-logout-headers
