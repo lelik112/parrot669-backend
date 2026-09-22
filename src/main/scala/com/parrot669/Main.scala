@@ -3,10 +3,20 @@ package com.parrot669
 import cats.effect.{IO, IOApp, Resource}
 import cats.syntax.all._
 import com.comcast.ip4s.{Host, Port}
-import com.parrot669.config.AppConfig
+import com.parrot669.config.{
+  AppConfig,
+  CloudflareEmailConfig,
+  ResendEmailConfig
+}
 import com.parrot669.db.Database
 import com.parrot669.http.Routes
-import com.parrot669.integration.HttpIcalFetcher
+import com.parrot669.integration.{
+  CloudflareVerificationEmailSender,
+  HttpIcalFetcher,
+  LoggingVerificationEmailSender,
+  ResendVerificationEmailSender,
+  VerificationEmailSender
+}
 import com.parrot669.repo.{AuthRepository, ParrotRepository}
 import com.parrot669.service.{AuthService, ParrotService}
 import org.http4s.ember.server.EmberServerBuilder
@@ -36,8 +46,28 @@ object Main extends IOApp.Simple {
         repo = new ParrotRepository[IO](xa)
         authRepo = new AuthRepository[IO](xa)
         icalFetcher = new HttpIcalFetcher[IO](allowLocalhost = config.environment == "test")
+        emailSender: VerificationEmailSender[IO] =
+          config.email match {
+            case Some(email: ResendEmailConfig) =>
+              new ResendVerificationEmailSender[IO](
+                email.apiKey,
+                email.from
+              )
+            case Some(email: CloudflareEmailConfig) =>
+              new CloudflareVerificationEmailSender[IO](
+                email.cloudflareAccountId,
+                email.cloudflareApiToken,
+                email.from
+              )
+            case None =>
+              new LoggingVerificationEmailSender[IO]
+          }
         service = new ParrotService[IO](repo, icalFetcher)
-        authService = new AuthService[IO](authRepo)
+        authService = new AuthService[IO](
+          authRepo,
+          emailSender,
+          config.publicBaseUrl
+        )
         routes = new Routes[IO](
           service,
           authService,

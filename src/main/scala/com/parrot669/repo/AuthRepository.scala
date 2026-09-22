@@ -12,12 +12,20 @@ import java.util.UUID
 
 final class AuthRepository[F[_]: Async](xa: Transactor[F]) {
 
-  def createAccountAndProfile(account: AccountRecord, profile: ProfileRecord): F[(AccountRecord, ProfileRecord)] =
+  def createAccountProfileAndVerification(
+      account: AccountRecord,
+      profile: ProfileRecord,
+      verification: EmailVerificationTokenRecord
+  ): F[(AccountRecord, ProfileRecord)] =
     (for {
       savedAccount <- sql"""
-        insert into accounts (id, email_normalized, password_hash, created_at)
-        values (${account.id}, ${account.emailNormalized}, ${account.passwordHash}, ${account.createdAt})
-        returning id, email_normalized, password_hash, created_at
+        insert into accounts (
+          id, email_normalized, password_hash, email_verified_at, created_at
+        ) values (
+          ${account.id}, ${account.emailNormalized}, ${account.passwordHash},
+          ${account.emailVerifiedAt}, ${account.createdAt}
+        )
+        returning id, email_normalized, password_hash, email_verified_at, created_at
       """.query[AccountRecord].unique
 
       savedProfile <- sql"""
@@ -29,14 +37,79 @@ final class AuthRepository[F[_]: Async](xa: Transactor[F]) {
         )
         returning id, parrot_id, display_name, contact, created_at
       """.query[ProfileRecord].unique
+
+      _ <- sql"""
+        insert into email_verification_tokens (
+          id, account_id, token_hash, created_at, expires_at, used_at
+        ) values (
+          ${verification.id}, ${verification.accountId}, ${verification.tokenHash},
+          ${verification.createdAt}, ${verification.expiresAt}, ${verification.usedAt}
+        )
+      """.update.run
     } yield (savedAccount, savedProfile)).transact(xa)
 
   def findAccountByEmail(emailNormalized: String): F[Option[AccountRecord]] =
     sql"""
-      select id, email_normalized, password_hash, created_at
+      select id, email_normalized, password_hash, email_verified_at, created_at
       from accounts
       where email_normalized = $emailNormalized
     """.query[AccountRecord].option.transact(xa)
+
+  def replaceEmailVerificationToken(
+      accountId: UUID,
+      verification: EmailVerificationTokenRecord,
+      now: OffsetDateTime
+  ): F[Unit] =
+    (for {
+      _ <- sql"""
+        update email_verification_tokens
+        set used_at = $now
+        where account_id = $accountId
+          and used_at is null
+      """.update.run
+      _ <- sql"""
+        insert into email_verification_tokens (
+          id, account_id, token_hash, created_at, expires_at, used_at
+        ) values (
+          ${verification.id}, ${verification.accountId}, ${verification.tokenHash},
+          ${verification.createdAt}, ${verification.expiresAt}, ${verification.usedAt}
+        )
+      """.update.run
+    } yield ()).transact(xa)
+
+  def verifyEmailToken(tokenHash: String, now: OffsetDateTime): F[Option[UUID]] = {
+    val action: ConnectionIO[Option[UUID]] =
+      for {
+        accountId <- sql"""
+          select account_id
+          from email_verification_tokens
+          where token_hash = $tokenHash
+            and used_at is null
+            and expires_at > $now
+          for update
+        """.query[UUID].option
+        result <- accountId match {
+          case None =>
+            Option.empty[UUID].pure[ConnectionIO]
+          case Some(id) =>
+            for {
+              _ <- sql"""
+                update email_verification_tokens
+                set used_at = $now
+                where account_id = $id
+                  and used_at is null
+              """.update.run
+              _ <- sql"""
+                update accounts
+                set email_verified_at = coalesce(email_verified_at, $now)
+                where id = $id
+              """.update.run
+            } yield Some(id)
+        }
+      } yield result
+
+    action.transact(xa)
+  }
 
   def createSession(session: SessionRecord): F[Unit] =
     sql"""

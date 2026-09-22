@@ -3,10 +3,12 @@ package com.parrot669.service
 import cats.effect.Async
 import cats.syntax.all._
 import com.parrot669.domain._
+import com.parrot669.integration.VerificationEmailSender
 import com.parrot669.repo.AuthRepository
 import de.mkammerer.argon2.Argon2Factory
 import de.mkammerer.argon2.Argon2Factory.Argon2Types
 import org.postgresql.util.PSQLException
+import org.slf4j.LoggerFactory
 
 import java.nio.charset.StandardCharsets
 import java.security.{MessageDigest, SecureRandom}
@@ -15,15 +17,24 @@ import java.util.{Base64, Locale, UUID}
 import java.util.concurrent.ConcurrentHashMap
 import scala.concurrent.duration._
 
-final class AuthService[F[_]: Async](repo: AuthRepository[F]) {
+final class AuthService[F[_]: Async](
+    repo: AuthRepository[F],
+    emailSender: VerificationEmailSender[F],
+    publicBaseUrl: String
+) {
   import ServiceError._
 
+  private val logger = LoggerFactory.getLogger("com.parrot669.auth")
   private val random = new SecureRandom()
   private val sessionTtl = 30.days
+  private val verificationTtl = 24.hours
+  private val resendCooldownMillis = 60.seconds.toMillis
   private val maxLoginFailures = 10
   private val loginWindowMillis = 15.minutes.toMillis
   private val failedLogins = new ConcurrentHashMap[String, Vector[Long]]()
+  private val lastVerificationSend = new ConcurrentHashMap[String, Long]()
   private val rateLimitLock = new AnyRef
+  private val verificationRateLock = new AnyRef
 
   private def now: F[OffsetDateTime] =
     Async[F].delay(OffsetDateTime.now(ZoneOffset.UTC))
@@ -66,6 +77,39 @@ final class AuthService[F[_]: Async](repo: AuthRepository[F]) {
       val alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
       val value = (1 to 8).map(_ => alphabet.charAt(random.nextInt(alphabet.length))).mkString
       s"PAR-${value}"
+    }
+
+  private def verificationUrl(rawToken: String): String =
+    s"${publicBaseUrl.stripSuffix("/")}/host.html#verify=$rawToken"
+
+  private def newVerification(
+      accountId: UUID
+  ): F[(String, EmailVerificationTokenRecord)] =
+    for {
+      id <- uuid
+      raw <- randomToken
+      createdAt <- now
+    } yield (
+      raw,
+      EmailVerificationTokenRecord(
+        id = id,
+        accountId = accountId,
+        tokenHash = sha256(raw),
+        createdAt = createdAt,
+        expiresAt = createdAt.plusSeconds(verificationTtl.toSeconds),
+        usedAt = None
+      )
+    )
+
+  private def canSendVerification(email: String): Boolean =
+    verificationRateLock.synchronized {
+      val current = System.currentTimeMillis()
+      val previous = Option(lastVerificationSend.get(email)).getOrElse(0L)
+      if (current - previous < resendCooldownMillis) false
+      else {
+        lastVerificationSend.put(email, current)
+        true
+      }
     }
 
   private def sha256(raw: String): String = {
@@ -160,7 +204,9 @@ final class AuthService[F[_]: Async](repo: AuthRepository[F]) {
     loop(error)
   }
 
-  def register(req: RegisterRequest): F[Either[ServiceError, AuthResult]] =
+  def register(
+      req: RegisterRequest
+  ): F[Either[ServiceError, RegistrationPending]] =
     validateRegistration(req) match {
       case Left(error) => Async[F].pure(Left(error))
       case Right((email, displayName)) =>
@@ -174,7 +220,14 @@ final class AuthService[F[_]: Async](repo: AuthRepository[F]) {
               profileId <- uuid
               parrotId <- randomParrotId
               createdAt <- now
-              account = AccountRecord(accountId, email, passwordHash, createdAt)
+              verification <- newVerification(accountId)
+              account = AccountRecord(
+                id = accountId,
+                emailNormalized = email,
+                passwordHash = passwordHash,
+                emailVerifiedAt = None,
+                createdAt = createdAt
+              )
               profile = ProfileRecord(
                 id = profileId,
                 parrotId = parrotId,
@@ -182,22 +235,108 @@ final class AuthService[F[_]: Async](repo: AuthRepository[F]) {
                 contact = email,
                 createdAt = createdAt
               )
-              saved <- repo.createAccountAndProfile(account, profile)
-              session <- createSession(saved._1.id)
-              context = AuthContext(
-                accountId = saved._1.id,
-                email = saved._1.emailNormalized,
-                profileId = saved._2.id,
-                parrotId = saved._2.parrotId,
-                displayName = saved._2.displayName
+              _ <- repo.createAccountProfileAndVerification(
+                account,
+                profile,
+                verification._2
               )
-            } yield AuthResult(toUser(context), session._1).asRight[ServiceError]).handleErrorWith {
+              delivery <- emailSender
+                .sendVerification(email, verificationUrl(verification._1))
+                .attempt
+            } yield delivery match {
+              case Right(_) =>
+                Right[ServiceError, RegistrationPending](
+                  RegistrationPending(
+                    email = email,
+                    verificationRequired = true
+                  )
+                )
+              case Left(error) =>
+                logger.error("Verification email delivery failed for {}", email, error)
+                Left[ServiceError, RegistrationPending](
+                  Unavailable(
+                    "verification email could not be sent; try resending it"
+                  )
+                )
+            }).handleErrorWith {
               case error if isUniqueViolation(error) =>
-                Async[F].pure(Left(Conflict("unable to register with these credentials")))
+                Async[F].pure(
+                  Left(Conflict("unable to register with these credentials"))
+                )
               case error => Async[F].raiseError(error)
             }
         }
     }
+
+  def resendVerification(
+      req: ResendVerificationRequest
+  ): F[Either[ServiceError, VerificationDispatchAccepted]] = {
+    val email = normalizedEmail(req.email)
+
+    val send =
+      if (!validEmail(email)) Async[F].unit
+      else
+        repo.findAccountByEmail(email).flatMap {
+          case Some(account)
+              if account.emailVerifiedAt.isEmpty && canSendVerification(email) =>
+            for {
+              verification <- newVerification(account.id)
+              current <- now
+              _ <- repo.replaceEmailVerificationToken(
+                account.id,
+                verification._2,
+                current
+              )
+              _ <- emailSender
+                .sendVerification(email, verificationUrl(verification._1))
+                .handleErrorWith { error =>
+                  Async[F].delay(
+                    logger.error(
+                      "Verification email resend failed for {}",
+                      email,
+                      error
+                    )
+                  )
+                }
+            } yield ()
+          case _ =>
+            Async[F].unit
+        }
+
+    send.as(Right(VerificationDispatchAccepted(accepted = true)))
+  }
+
+  def verifyEmail(
+      req: VerifyEmailRequest
+  ): F[Either[ServiceError, AuthResult]] = {
+    val raw = normalized(req.token)
+
+    if (raw.isEmpty || raw.length > 256)
+      Async[F].pure(Left(Invalid("verification link is invalid or expired")))
+    else
+      for {
+        current <- now
+        verified <- repo.verifyEmailToken(sha256(raw), current)
+        result <- verified match {
+          case None =>
+            Async[F].pure(
+              Left[ServiceError, AuthResult](
+                Invalid("verification link is invalid or expired")
+              )
+            )
+          case Some(accountId) =>
+            for {
+              session <- createSession(accountId)
+              context <- repo.authContextForAccount(accountId)
+            } yield context match {
+              case Some(value) =>
+                Right(AuthResult(toUser(value), session._1))
+              case None =>
+                Left(Unauthorized("account has no host profile"))
+            }
+        }
+      } yield result
+  }
 
   def login(req: LoginRequest): F[Either[ServiceError, AuthResult]] = {
     val email = normalizedEmail(req.email)
@@ -219,6 +358,11 @@ final class AuthService[F[_]: Async](repo: AuthRepository[F]) {
             case false =>
               Async[F].delay(recordLoginFailure(key)) *>
                 Async[F].pure(Left(Unauthorized("invalid email or password")))
+
+            case true if account.emailVerifiedAt.isEmpty =>
+              Async[F].pure(
+                Left(Forbidden("email verification required"))
+              )
 
             case true =>
               for {

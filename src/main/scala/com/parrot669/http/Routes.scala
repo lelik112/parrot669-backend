@@ -69,10 +69,14 @@ final class Routes[F[_]: Async](
           Response[F](status = Status.Unauthorized)
             .withEntity(ErrorResponse(message))
         )
+      case ServiceError.Forbidden(message) =>
+        Forbidden(ErrorResponse(message))
       case ServiceError.Conflict(message) =>
         Conflict(ErrorResponse(message))
       case ServiceError.RateLimited(message) =>
         TooManyRequests(ErrorResponse(message))
+      case ServiceError.Unavailable(message) =>
+        ServiceUnavailable(ErrorResponse(message))
     }
 
   private def respond[A: Encoder](
@@ -111,10 +115,26 @@ final class Routes[F[_]: Async](
     case request @ POST -> Root / "api" / "auth" / "register" =>
       decode[RegisterRequest](request) { body =>
         authService.register(body).flatMap {
+          case Right(result) => Accepted(result)
+          case Left(error)   => respondError(error)
+        }
+      }
+
+    case request @ POST -> Root / "api" / "auth" / "verify-email" =>
+      decode[VerifyEmailRequest](request) { body =>
+        authService.verifyEmail(body).flatMap {
           case Right(result) =>
-            Created(result.user).map(_.putHeaders(sessionCookie(result.sessionToken)))
+            Ok(result.user).map(_.putHeaders(sessionCookie(result.sessionToken)))
           case Left(error) =>
             respondError(error)
+        }
+      }
+
+    case request @ POST -> Root / "api" / "auth" / "resend-verification" =>
+      decode[ResendVerificationRequest](request) { body =>
+        authService.resendVerification(body).flatMap {
+          case Right(result) => Accepted(result)
+          case Left(error)   => respondError(error)
         }
       }
 
