@@ -61,7 +61,7 @@ object AppConfig {
         }
 
       val emailFrom =
-        nonEmpty(env, "PARROT_EMAIL_FROM").getOrElse("hello@parrot669.com")
+        nonEmpty(env, "PARROT_EMAIL_FROM").getOrElse("hello@auth.parrot669.com")
 
       val resendEmailConfig =
         nonEmpty(env, "RESEND_API_KEY").map { apiKey =>
