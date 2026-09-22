@@ -618,7 +618,7 @@ assert data["method"] == "calendar_challenge", data
 print("Verification response passed")
 PY
 
-updated_property_json=$(curl --fail --silent -X PUT   "http://localhost:$HTTP_PORT/api/properties/$property_id"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"accommodationType":"entire_place","minStayDays":7,"cleaningFeeCents":6500}')
+updated_property_json=$(curl --fail --silent -X PUT   "http://localhost:$HTTP_PORT/api/properties/$property_id"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"accommodationType":"entire_place","bedrooms":2,"sleeps":5,"minStayDays":7,"cleaningFeeCents":6500}')
 
 UPDATED_PROPERTY_JSON="$updated_property_json" python3 - <<'PY'
 import json, os
