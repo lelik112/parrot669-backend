@@ -260,8 +260,11 @@ final class AuthService[F[_]: Async](
   def verifyEmail(req: VerifyEmailRequest): F[Either[ServiceError, AuthResult]] = {
     val rawToken = normalized(req.token)
 
+    def invalidToken: F[Either[ServiceError, AuthResult]] =
+      Async[F].pure(Left[ServiceError, AuthResult](Invalid("verification token is invalid or expired")))
+
     if (rawToken.isEmpty || rawToken.length > 256)
-      Async[F].pure(Left(Invalid("verification token is invalid or expired")))
+      invalidToken
     else
       for {
         current <- now
@@ -270,19 +273,21 @@ final class AuthService[F[_]: Async](
           case Some(value) if value.usedAt.isEmpty && value.expiresAt.isAfter(current) =>
             repo.consumeEmailVerificationToken(value.id, current).flatMap {
               case false =>
-                Async[F].pure(Invalid("verification token is invalid or expired").asLeft[AuthResult])
+                invalidToken
               case true =>
                 for {
                   _ <- repo.markEmailVerified(value.accountId)
                   session <- createSession(value.accountId)
                   context <- repo.authContextForAccount(value.accountId)
                 } yield context match {
-                  case Some(authContext) => AuthResult(toUser(authContext), session._1).asRight[ServiceError]
-                  case None              => Unauthorized("account has no host profile").asLeft[AuthResult]
+                  case Some(authContext) =>
+                    Right[ServiceError, AuthResult](AuthResult(toUser(authContext), session._1))
+                  case None =>
+                    Left[ServiceError, AuthResult](Unauthorized("account has no host profile"))
                 }
             }
           case _ =>
-            Async[F].pure(Invalid("verification token is invalid or expired").asLeft[AuthResult])
+            invalidToken
         }
       } yield result
   }
