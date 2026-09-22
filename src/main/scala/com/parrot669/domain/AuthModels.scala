@@ -28,7 +28,6 @@ final case class AuthContext(
 
 final case class RegisterRequest(email: String, password: String, displayName: String)
 final case class LoginRequest(email: String, password: String)
-final case class LegacyClaimRequest(profileId: String, editToken: String)
 
 final case class AuthProfile(id: String, parrotId: String, displayName: String)
 final case class AuthUser(accountId: String, email: String, profile: AuthProfile)
