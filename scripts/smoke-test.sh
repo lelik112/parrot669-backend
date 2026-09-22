@@ -213,6 +213,15 @@ wrong_calendar_listing_status=$(curl --silent --output /dev/null --write-out '%{
 
 test "$wrong_calendar_listing_status" = "400"
 
+localized_calendar_mismatch_json=$(curl --silent -X POST "http://localhost:$HTTP_PORT/api/properties/$property_id/calendars"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"provider":"airbnb","icalUrl":"https://www.airbnb.ru/calendar/ical/23456789.ics?t=ci-secret"}')
+
+LOCALIZED_CALENDAR_MISMATCH_JSON="$localized_calendar_mismatch_json" python3 - <<'PY'
+import json, os
+data = json.loads(os.environ["LOCALIZED_CALENDAR_MISMATCH_JSON"])
+assert data["error"] == "Airbnb calendar listing id does not match this property's Airbnb listing", data
+print("Localized Airbnb calendar URL validation passed")
+PY
+
 lookalike_airbnb_host_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   -X POST "http://localhost:$HTTP_PORT/api/properties/$property_id/calendars"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"provider":"airbnb","icalUrl":"https://airbnb.com.evil.invalid/calendar/ical/123456789.ics?t=ci-secret"}')
 
 test "$lookalike_airbnb_host_status" = "400"

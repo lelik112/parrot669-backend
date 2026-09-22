@@ -20,6 +20,17 @@ final case class ParsedIcalEvent(
 
 object AirbnbIcal {
   private val ListingPath = """^/calendar/ical/([0-9]+)\.ics$""".r
+  private val LocalizedAirbnbHost = """^(?:www\.)?airbnb\.(?:[a-z]{2}|com|co\.[a-z]{2}|com\.[a-z]{2})$""".r
+
+  private def isAirbnbHost(host: String): Boolean =
+    host == "airbnb.com" ||
+      host.endsWith(".airbnb.com") ||
+      LocalizedAirbnbHost.pattern.matcher(host).matches()
+
+  private def canonicalAirbnbUri(uri: URI): URI = {
+    val query = Option(uri.getRawQuery).fold("")(value => s"?$value")
+    URI.create(s"https://www.airbnb.com${uri.getRawPath}$query")
+  }
 
   private def unfold(raw: String): Vector[String] =
     raw
@@ -102,15 +113,15 @@ object AirbnbIcal {
       .flatMap { uri =>
         val host = Option(uri.getHost).fold("")(_.toLowerCase)
         val isLocal = allowLocalhost && (host == "127.0.0.1" || host == "localhost")
-        val isAirbnb = host == "airbnb.com" || host.endsWith(".airbnb.com")
-        val validScheme = uri.getScheme == "https" || (isLocal && uri.getScheme == "http")
+        val isAirbnb = isAirbnbHost(host)
+        val isHttps = Option(uri.getScheme).exists(_.equalsIgnoreCase("https"))
+        val validScheme = isHttps || (isLocal && Option(uri.getScheme).exists(_.equalsIgnoreCase("http")))
         val validPath = Option(uri.getPath).exists(path => ListingPath.findFirstMatchIn(path).nonEmpty)
 
-        Either.cond(
-          validScheme && (isAirbnb || isLocal) && validPath,
-          uri,
-          "URL must be an Airbnb iCal export link"
-        )
+        if (!validScheme || !validPath || (!isAirbnb && !isLocal))
+          Left("URL must be an Airbnb iCal export link")
+        else if (isLocal) Right(uri)
+        else Right(canonicalAirbnbUri(uri))
       }
 
   def listingId(raw: String, allowLocalhost: Boolean): Either[String, String] =
