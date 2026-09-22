@@ -24,25 +24,31 @@ That means exactly “this profile demonstrated control of this external listing
 - Java 21 recommended
 - sbt 1.11.6
 
-## Domain in v0
+## Domain and authentication
 
 ```text
-Profile
-  └─ Property
-       └─ ExternalListing (Airbnb for now)
-            └─ VerificationChallenge
+Account
+  ├─ Session
+  └─ Host Profile
+       └─ Property
+            └─ ExternalListing (Airbnb for now)
+                 └─ VerificationChallenge
 
-Profile + ExternalListing
+Host Profile + ExternalListing
   └─ Verification(claim = controls_listing)
 ```
 
-A profile gets a human-readable ID like:
+`Account` is the login identity. It has a normalized unique email and an Argon2id password hash. A Host Profile is the domain identity shown to guests and owns properties. For the current MVP, one account owns one Host Profile.
+
+A profile still gets a human-readable ID like:
 
 ```text
 P669-K7M2Q8XZ
 ```
 
-The profile owner also receives a high-entropy edit token once at creation time. Only its SHA-256 hash is stored in PostgreSQL. We do not need passwords/OAuth yet merely to prove that computers remain capable of making simple ideas complicated.
+Owner authorization is ownership-based, not role-based: the authenticated session resolves an Account and its Host Profile, and owner mutations verify that the target resource belongs to that profile. Guest search is public and "host" is not an RBAC role. The existing `PARROT_ADMIN_TOKEN` remains a separate technical mechanism for the internal verification endpoint.
+
+Sessions use opaque 256-bit random tokens in an HttpOnly, SameSite=Lax cookie; production cookies are also Secure. PostgreSQL stores only SHA-256 hashes of session tokens. Sessions expire after 30 days, multiple active sessions are allowed, and logout invalidates the current server-side session.
 
 ## 1. Start PostgreSQL
 
@@ -91,62 +97,60 @@ curl http://localhost:8080/health
 
 ## 4. End-to-end example
 
-### Create profile
+The browser frontend uses the same endpoints through the Cloudflare Worker and never reads the session token. For command-line testing, use a curl cookie jar.
+
+### Register
 
 ```bash
-curl -s http://localhost:8080/api/profiles \
+curl -s -c cookies.txt http://localhost:8080/api/auth/register \
   -H 'content-type: application/json' \
   -d '{
-    "displayName": "Alex",
-    "contact": "alex@example.com"
+    "email": "alex@example.com",
+    "password": "correct-horse-battery-staple",
+    "displayName": "Alex"
   }'
 ```
 
-Response shape:
+Registration creates the Account, its Host Profile, and a fresh server-side session. The response contains public account/profile metadata, while the raw session token is returned only through `Set-Cookie`.
 
-```json
-{
-  "id": "<PROFILE_UUID>",
-  "profile": {
-    "parrotId": "P669-K7M2Q8XZ",
-    "displayName": "Alex",
-    "createdAt": "2026-09-19T18:00:00Z"
-  },
-  "editToken": "...returned once..."
-}
+Check the current identity:
+
+```bash
+curl -s -b cookies.txt http://localhost:8080/api/auth/me
 ```
-
-Keep `editToken`. It is deliberately **not** exposed by the public profile endpoint. The returned top-level `id` is the internal profile UUID used by owner mutation URLs.
 
 ### Create property
 
 ```bash
-curl -s http://localhost:8080/api/profiles/<PROFILE_UUID>/properties \
+curl -s -b cookies.txt http://localhost:8080/api/properties \
   -H 'content-type: application/json' \
-  -H 'X-Parrot-Token: <EDIT_TOKEN>' \
   -d '{
     "title": "Apartment near the sea",
-    "city": "Barcelona"
+    "city": "Barcelona",
+    "accommodationType": "entire_place",
+    "bedrooms": 2,
+    "sleeps": 4
   }'
 ```
+
+The authenticated Host Profile is derived from the session. The caller does not provide a profile id as a credential.
 
 ### Attach Airbnb listing
 
 ```bash
-curl -s http://localhost:8080/api/properties/<PROPERTY_UUID>/listings \
+curl -s -b cookies.txt http://localhost:8080/api/properties/<PROPERTY_UUID>/listings \
   -H 'content-type: application/json' \
-  -H 'X-Parrot-Token: <EDIT_TOKEN>' \
   -d '{
     "platform": "airbnb",
-    "url": "https://www.airbnb.com/rooms/123456789"
+    "externalId": "123456789"
   }'
 ```
 
 ### Create calendar challenge
 
 ```bash
-curl -s -X POST http://localhost:8080/api/listings/<LISTING_UUID>/challenges \
-  -H 'X-Parrot-Token: <EDIT_TOKEN>'
+curl -s -b cookies.txt -X POST \
+  http://localhost:8080/api/listings/<LISTING_UUID>/challenges
 ```
 
 Example response:
@@ -164,6 +168,21 @@ Example response:
 ```
 
 The host temporarily makes the real calendar match that pattern. The middle date remains available, which makes accidental matches less likely.
+
+### Legacy profile claim
+
+Profiles created before account authentication can be attached exactly once to an authenticated account:
+
+```bash
+curl -s -b cookies.txt http://localhost:8080/api/auth/claim-legacy \
+  -H 'content-type: application/json' \
+  -d '{
+    "profileId": "<LEGACY_PROFILE_UUID>",
+    "editToken": "<LEGACY_EDIT_TOKEN>"
+  }'
+```
+
+A successful claim moves the account to the legacy Host Profile and clears its old edit-token hash. Normal owner endpoints do not accept `X-Parrot-Token`.
 
 ### Manually confirm challenge
 
@@ -196,27 +215,40 @@ The public response contains:
 - verification claims and methods;
 - whether each verification is still active.
 
-It intentionally does **not** expose the private contact field or edit-token hash.
+It intentionally does **not** expose private account credentials, password hashes, session tokens, or legacy edit-token hashes.
 
 ## API summary
 
 ```text
 GET  /health
-POST /api/profiles
-POST /api/profiles/:profileId/properties
+
+POST /api/auth/register
+POST /api/auth/login
+POST /api/auth/logout
+GET  /api/auth/me
+POST /api/auth/claim-legacy          # temporary legacy migration path
+
+GET  /api/dashboard                  # authenticated owner dashboard
+POST /api/properties                 # authenticated owner
+PUT  /api/properties/:propertyId
+DELETE /api/properties/:propertyId
+GET|POST /api/properties/:propertyId/availability
+PUT|DELETE /api/availability/:availabilityId
 POST /api/properties/:propertyId/listings
+PUT|DELETE /api/listings/:listingId
+POST /api/properties/:propertyId/calendars
+POST /api/calendars/:calendarId/sync
+PUT|DELETE /api/calendars/:calendarId
 POST /api/listings/:listingId/challenges
-POST /api/challenges/:challengeId/verify   # admin only
-GET  /api/p/:parrotId                     # public
+
+GET  /api/search                     # public
+GET  /api/p/:parrotId                # public
+POST /api/challenges/:challengeId/verify  # admin only
 ```
 
-Owner mutation endpoints use:
+The compatibility routes `GET /api/profiles/:profileId/dashboard` and `POST /api/profiles/:profileId/properties` remain authenticated; the profile id must match the session identity and is not a credential.
 
-```text
-X-Parrot-Token: <edit token>
-```
-
-Manual verification uses:
+Manual verification still uses:
 
 ```text
 X-Parrot-Admin: <admin token>
@@ -230,29 +262,9 @@ Flyway migrations live in:
 src/main/resources/db/migration/
 ```
 
-Current migration:
+The schema is additive through V11. In particular, V11 adds `accounts`, server-side `sessions`, one-to-one account/profile ownership, nullable legacy edit-token hashes, and reserved `password_reset_tokens` storage.
 
-```text
-V1__init.sql
-```
-
-It creates:
-
-- `profiles`
-- `properties`
-- `external_listings`
-- `verification_challenges`
-- `verifications`
-- FK constraints and useful indexes
-
-Future changes should be additive migrations, for example:
-
-```text
-V2__identity_verification.sql
-V3__right_to_rent_claim.sql
-```
-
-Do not rewrite V1 after it has been applied anywhere persistent. Flyway remembers checksums and will quite reasonably complain when humans attempt time travel.
+Do not rewrite already-applied migrations. Flyway remembers checksums and will quite reasonably complain when humans attempt time travel.
 
 ## Build fat JAR
 
@@ -276,9 +288,9 @@ This shape is convenient for Railway/Fly.io/a small VM. Point `DATABASE_URL`, `D
 
 ## What is intentionally not here yet
 
-- accounts/password login;
+- password-reset email delivery (the V11 reset-token table is reserved, but no fake recovery flow is exposed);
 - OAuth;
-- public catalogue/search;
+- general RBAC/roles;
 - messaging;
 - booking/payment flow;
 - reviews;
@@ -288,11 +300,9 @@ This shape is convenient for Railway/Fly.io/a small VM. Point `DATABASE_URL`, `D
 - right-to-rent verification;
 - ownership verification.
 
-Those are later claims/features. First we need one owner to create a profile, attach a real listing and prove one thing.
-
 ## Next sensible backend steps
 
-1. Add tests with Testcontainers/Postgres.
+1. Connect a real email provider and add password-reset request/confirm endpoints.
 2. Add `identity` and `right_to_rent` as separate claims, never as a generic `verified=true`.
 3. Add an admin UI or tiny internal endpoint to list pending challenges.
-4. Only then automate calendar observation if manual verification becomes annoying enough to deserve code.
+4. Replace the simple in-process login limiter only if traffic or horizontal scaling makes a distributed limiter worth the complexity.
