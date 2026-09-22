@@ -31,6 +31,15 @@ final case class AuthResult(
     sessionToken: String
 )
 
+final case class RegistrationPending(
+    email: String,
+    message: String
+)
+
+final case class VerifyEmailRequest(
+    token: String
+)
+
 final case class AuthContext(
     accountId: UUID,
     email: String,
