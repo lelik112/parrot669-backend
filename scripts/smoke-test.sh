@@ -13,7 +13,6 @@ export DATABASE_URL DATABASE_USER DATABASE_PASSWORD PARROT_ADMIN_TOKEN HTTP_PORT
 LOG_FILE="${TMPDIR:-/tmp}/parrot669-smoke.log"
 COOKIE_JAR=$(mktemp)
 OTHER_COOKIE_JAR=$(mktemp)
-CLAIM_COOKIE_JAR=$(mktemp)
 ICAL_DIR=$(mktemp -d)
 mkdir -p "$ICAL_DIR/calendar/ical"
 cat >"$ICAL_DIR/calendar/ical/123456789.ics" <<'ICS'
@@ -46,7 +45,7 @@ cleanup() {
   kill "$SERVER_PID" 2>/dev/null || true
   kill "$ICAL_SERVER_PID" 2>/dev/null || true
   rm -rf "$ICAL_DIR"
-  rm -f "$COOKIE_JAR" "$OTHER_COOKIE_JAR" "$CLAIM_COOKIE_JAR"
+  rm -f "$COOKIE_JAR" "$OTHER_COOKIE_JAR"
   pkill -f 'com.parrot669.Main' 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -119,43 +118,16 @@ assert data["profile"]["id"] == sys.argv[1], data
 print("Login passed")
 PY
 
-legacy_profile_id="11111111-1111-4111-8111-111111111111"
-legacy_edit_token="legacy-ci-edit-token"
-legacy_token_hash=$(python3 -c 'import hashlib; print(hashlib.sha256(b"legacy-ci-edit-token").hexdigest())')
-PGPASSWORD="$DATABASE_PASSWORD" psql "${DATABASE_URL#jdbc:}" -U "$DATABASE_USER" -v ON_ERROR_STOP=1 >/dev/null <<SQL
-insert into profiles (id, parrot_id, display_name, contact, access_token_hash, account_id, created_at)
-values ('$legacy_profile_id', 'PAR-LEGACYCI', 'Legacy CI Host', 'legacy@example.com', '$legacy_token_hash', null, now());
-SQL
-
-curl --fail --silent -c "$CLAIM_COOKIE_JAR" -b "$CLAIM_COOKIE_JAR" \
-  -X POST "http://localhost:$HTTP_PORT/api/auth/register" \
-  -H 'content-type: application/json' \
-  -d '{"email":"claim@example.com","password":"claim-ci-password-12345","displayName":"Temporary Claim Host"}' >/dev/null
-
-claim_json=$(curl --fail --silent -b "$CLAIM_COOKIE_JAR" \
+legacy_claim_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  -b "$COOKIE_JAR" \
   -X POST "http://localhost:$HTTP_PORT/api/auth/claim-legacy" \
   -H 'content-type: application/json' \
-  -d "{\"profileId\":\"$legacy_profile_id\",\"editToken\":\"$legacy_edit_token\"}")
+  -d '{"profileId":"11111111-1111-4111-8111-111111111111","editToken":"obsolete"}')
+test "$legacy_claim_status" = "404"
 
-CLAIM_JSON="$claim_json" python3 - "$legacy_profile_id" <<'PY'
-import json, os, sys
-data = json.loads(os.environ["CLAIM_JSON"])
-assert data["profile"]["id"] == sys.argv[1], data
-assert data["profile"]["displayName"] == "Legacy CI Host", data
-print("Legacy profile claim passed")
-PY
-
-legacy_reclaim_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
-  -b "$CLAIM_COOKIE_JAR" \
-  -X POST "http://localhost:$HTTP_PORT/api/auth/claim-legacy" \
-  -H 'content-type: application/json' \
-  -d "{\"profileId\":\"$legacy_profile_id\",\"editToken\":\"$legacy_edit_token\"}")
-test "$legacy_reclaim_status" = "401"
-
-legacy_header_bypass_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
-  -H "X-Parrot-Token: $legacy_edit_token" \
-  "http://localhost:$HTTP_PORT/api/profiles/$legacy_profile_id/dashboard")
-test "$legacy_header_bypass_status" = "401"
+legacy_dashboard_alias_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  -b "$COOKIE_JAR" "http://localhost:$HTTP_PORT/api/profiles/$profile_id/dashboard")
+test "$legacy_dashboard_alias_status" = "404"
 
 property_json=$(curl --fail --silent -b "$COOKIE_JAR" \
   -X POST "http://localhost:$HTTP_PORT/api/properties" \
@@ -210,7 +182,7 @@ availability_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])
 
 availability_list_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/properties/$property_id/availability"   -b "$COOKIE_JAR")
 
-dashboard_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/profiles/$profile_id/dashboard"   -b "$COOKIE_JAR")
+dashboard_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/dashboard"   -b "$COOKIE_JAR")
 
 DASHBOARD_JSON="$dashboard_json" python3 - "$property_id" "$listing_id" "$availability_id" <<'PY'
 import json, os, sys
@@ -439,7 +411,7 @@ assert search == [], search
 print("Re-enabled calendar blocks search again")
 PY
 
-calendar_dashboard_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/profiles/$profile_id/dashboard"   -b "$COOKIE_JAR")
+calendar_dashboard_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/dashboard"   -b "$COOKIE_JAR")
 
 CALENDAR_DASHBOARD_JSON="$calendar_dashboard_json" python3 - "$calendar_id" <<'PY'
 import json, os, sys
@@ -542,7 +514,7 @@ assert priced == [], priced
 print("Incomplete price behavior passed")
 PY
 
-sort_property_json=$(curl --fail --silent -X POST "http://localhost:$HTTP_PORT/api/profiles/$profile_id/properties"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"title":"Budget Apartment","city":"Barcelona","accommodationType":"entire_place","bedrooms":2,"sleeps":4}')
+sort_property_json=$(curl --fail --silent -X POST "http://localhost:$HTTP_PORT/api/properties"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"title":"Budget Apartment","city":"Barcelona","accommodationType":"entire_place","bedrooms":2,"sleeps":4}')
 
 sort_property_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$sort_property_json")
 
@@ -635,7 +607,7 @@ curl --fail --silent   -X DELETE "http://localhost:$HTTP_PORT/api/listings/$list
 
 after_listing_delete_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/p/$parrot_id")
 after_listing_delete_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-04-02&to=2027-04-09&bedrooms=2&sleeps=4")
-after_listing_delete_dashboard_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/profiles/$profile_id/dashboard"   -b "$COOKIE_JAR")
+after_listing_delete_dashboard_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/dashboard"   -b "$COOKIE_JAR")
 
 AFTER_LISTING_DELETE_JSON="$after_listing_delete_json" AFTER_LISTING_DELETE_SEARCH_JSON="$after_listing_delete_search_json" AFTER_LISTING_DELETE_DASHBOARD_JSON="$after_listing_delete_dashboard_json" python3 - "$property_id" <<'PY'
 import json, os
