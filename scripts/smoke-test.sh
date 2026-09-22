@@ -280,7 +280,7 @@ assert data["reservationBlocks"][0]["to"] == "2027-01-18", data
 print("Failed reconnect preserves the last good calendar snapshot")
 PY
 
-preserved_reservation_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-15&to=2027-01-16&bedrooms=2&sleeps=4")
+preserved_reservation_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
 
 PRESERVED_RESERVATION_SEARCH_JSON="$preserved_reservation_search_json" python3 - <<'PY'
 import json, os
