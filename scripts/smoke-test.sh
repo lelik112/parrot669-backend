@@ -126,6 +126,18 @@ property_json=$(curl --fail --silent -b "$COOKIE_JAR" \
 
 property_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$property_json")
 
+curl --fail --silent -c "$OTHER_COOKIE_JAR" -b "$OTHER_COOKIE_JAR" \
+  -X POST "http://localhost:$HTTP_PORT/api/auth/register" \
+  -H 'content-type: application/json' \
+  -d '{"email":"other@example.com","password":"other-ci-password-12345","displayName":"Other Host"}' >/dev/null
+
+other_owner_update_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  -b "$OTHER_COOKIE_JAR" \
+  -X PUT "http://localhost:$HTTP_PORT/api/properties/$property_id" \
+  -H 'content-type: application/json' \
+  -d '{"accommodationType":"entire_place","minStayDays":2,"cleaningFeeCents":null}')
+test "$other_owner_update_status" = "404"
+
 property_settings_json=$(curl --fail --silent -X PUT "http://localhost:$HTTP_PORT/api/properties/$property_id"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"accommodationType":"private_room","minStayDays":7,"cleaningFeeCents":5500}')
 
 PROPERTY_SETTINGS_JSON="$property_settings_json" python3 - <<'PY'
