@@ -111,29 +111,76 @@ final class Routes[F[_]: Async](
         case _           => ServiceUnavailable(HealthResponse(ok = false))
       }
 
-    case request @ POST -> Root / "api" / "profiles" =>
-      decode[CreateProfileRequest](request) { body =>
-        service.createProfile(body).flatMap(result => respond(result, created = true))
+    case request @ POST -> Root / "api" / "auth" / "register" =>
+      decode[RegisterRequest](request) { body =>
+        authService.register(body).flatMap {
+          case Right(result) =>
+            Created(result.user).map(_.putHeaders(sessionCookie(result.sessionToken)))
+          case Left(error) =>
+            respondError(error)
+        }
+      }
+
+    case request @ POST -> Root / "api" / "auth" / "login" =>
+      decode[LoginRequest](request) { body =>
+        authService.login(body, clientKey(request)).flatMap {
+          case Right(result) =>
+            Ok(result.user).map(_.putHeaders(sessionCookie(result.sessionToken)))
+          case Left(error) =>
+            respondError(error)
+        }
+      }
+
+    case request @ POST -> Root / "api" / "auth" / "logout" =>
+      authService.logout(sessionToken(request)) *>
+        NoContent().map(_.putHeaders(clearSessionCookie))
+
+    case request @ GET -> Root / "api" / "auth" / "me" =>
+      authenticated(request) { context =>
+        Ok(authService.currentUser(context))
+      }
+
+    case request @ POST -> Root / "api" / "auth" / "claim-legacy" =>
+      authenticated(request) { context =>
+        decode[LegacyClaimRequest](request) { body =>
+          authService.claimLegacy(context, body).flatMap(result => respond(result))
+        }
+      }
+
+    case request @ GET -> Root / "api" / "dashboard" =>
+      authenticated(request) { context =>
+        service.hostDashboard(context.profileId, context.profileId).flatMap(result => respond(result))
       }
 
     case request @ GET -> Root / "api" / "profiles" / profileIdRaw / "dashboard" =>
-      parseUuid(profileIdRaw) match {
-        case Left(error) => respondError(error)
-        case Right(profileId) =>
-          val token = header(request, "X-Parrot-Token")
-          service.hostDashboard(profileId, token).flatMap(result => respond(result))
+      authenticated(request) { context =>
+        parseUuid(profileIdRaw) match {
+          case Left(error) => respondError(error)
+          case Right(profileId) =>
+            service.hostDashboard(profileId, context.profileId).flatMap(result => respond(result))
+        }
+      }
+
+    case request @ POST -> Root / "api" / "properties" =>
+      authenticated(request) { context =>
+        decode[CreatePropertyRequest](request) { body =>
+          service
+            .createProperty(context.profileId, context.profileId, body)
+            .flatMap(result => respond(result, created = true))
+        }
       }
 
     case request @ POST -> Root / "api" / "profiles" / profileIdRaw / "properties" =>
-      parseUuid(profileIdRaw) match {
-        case Left(error) => respondError(error)
-        case Right(profileId) =>
-          decode[CreatePropertyRequest](request) { body =>
-            val token = header(request, "X-Parrot-Token")
-            service
-              .createProperty(profileId, token, body)
-              .flatMap(result => respond(result, created = true))
-          }
+      authenticated(request) { context =>
+        parseUuid(profileIdRaw) match {
+          case Left(error) => respondError(error)
+          case Right(profileId) =>
+            decode[CreatePropertyRequest](request) { body =>
+              service
+                .createProperty(profileId, context.profileId, body)
+                .flatMap(result => respond(result, created = true))
+            }
+        }
       }
 
     case request @ PUT -> Root / "api" / "properties" / propertyIdRaw =>
