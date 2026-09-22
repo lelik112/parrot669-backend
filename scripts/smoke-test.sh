@@ -71,13 +71,58 @@ curl --fail --silent "http://localhost:$HTTP_PORT/health" >/dev/null || {
   exit 1
 }
 
-profile_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/profiles"   -H 'content-type: application/json'   -d '{"displayName":"CI Host","contact":"ci@example.com"}')
+AUTH_TEST_PASSWORD="ci-auth-password-12345"
 
-profile_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$profile_json")
-parrot_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["profile"]["parrotId"])' <<<"$profile_json")
-edit_token=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["editToken"])' <<<"$profile_json")
+register_json=$(curl --fail --silent -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+  -X POST "http://localhost:$HTTP_PORT/api/auth/register" \
+  -H 'content-type: application/json' \
+  -d "{\"email\":\"ci@example.com\",\"password\":\"$AUTH_TEST_PASSWORD\",\"displayName\":\"CI Host\"}")
 
-property_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/profiles/$profile_id/properties"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"title":"CI Apartment","city":"Barcelona","accommodationType":"entire_place","bedrooms":2,"sleeps":5}')
+profile_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["profile"]["id"])' <<<"$register_json")
+parrot_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["profile"]["parrotId"])' <<<"$register_json")
+
+me_json=$(curl --fail --silent -b "$COOKIE_JAR" "http://localhost:$HTTP_PORT/api/auth/me")
+ME_JSON="$me_json" python3 - "$profile_id" <<'PY'
+import json, os, sys
+data = json.loads(os.environ["ME_JSON"])
+assert data["email"] == "ci@example.com", data
+assert data["profile"]["id"] == sys.argv[1], data
+print("Register and /me passed")
+PY
+
+unauthenticated_dashboard_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  "http://localhost:$HTTP_PORT/api/dashboard")
+test "$unauthenticated_dashboard_status" = "401"
+
+curl --fail --silent -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
+  -X POST "http://localhost:$HTTP_PORT/api/auth/logout" --output /dev/null
+
+logged_out_me_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  -b "$COOKIE_JAR" "http://localhost:$HTTP_PORT/api/auth/me")
+test "$logged_out_me_status" = "401"
+
+wrong_password_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  -X POST "http://localhost:$HTTP_PORT/api/auth/login" \
+  -H 'content-type: application/json' \
+  -d '{"email":"ci@example.com","password":"wrong-password-value"}')
+test "$wrong_password_status" = "401"
+
+login_json=$(curl --fail --silent -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+  -X POST "http://localhost:$HTTP_PORT/api/auth/login" \
+  -H 'content-type: application/json' \
+  -d "{\"email\":\"CI@EXAMPLE.COM\",\"password\":\"$AUTH_TEST_PASSWORD\"}")
+
+LOGIN_JSON="$login_json" python3 - "$profile_id" <<'PY'
+import json, os, sys
+data = json.loads(os.environ["LOGIN_JSON"])
+assert data["profile"]["id"] == sys.argv[1], data
+print("Login passed")
+PY
+
+property_json=$(curl --fail --silent -b "$COOKIE_JAR" \
+  -X POST "http://localhost:$HTTP_PORT/api/properties" \
+  -H 'content-type: application/json' \
+  -d '{"title":"CI Apartment","city":"Barcelona","accommodationType":"entire_place","bedrooms":2,"sleeps":5}')
 
 property_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$property_json")
 
