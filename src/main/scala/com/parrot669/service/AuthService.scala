@@ -168,8 +168,22 @@ final class AuthService[F[_]: Async](
       case Left(error) => Async[F].pure(Left(error))
       case Right((email, displayName)) =>
         repo.findAccountByEmail(email).flatMap {
-          case Some(_) =>
+          case Some(account) if account.emailVerified =>
             Async[F].pure(Left(Conflict("unable to register with these credentials")))
+          case Some(account) =>
+            verifyPassword(account.passwordHash, req.password).flatMap {
+              case false =>
+                Async[F].pure(Left(Conflict("unable to register with these credentials")))
+              case true =>
+                emailVerificationService
+                  .createVerification(account.id, account.emailNormalized)
+                  .as(
+                    RegistrationPending(
+                      email = account.emailNormalized,
+                      message = "check your email to verify your account"
+                    ).asRight[ServiceError]
+                  )
+            }
           case None =>
             (for {
               passwordHash <- hashPassword(req.password)
