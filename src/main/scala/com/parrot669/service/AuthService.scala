@@ -245,7 +245,7 @@ final class AuthService[F[_]: Async](
                 .attempt
             } yield delivery match {
               case Right(_) =>
-                Right(
+                Right[ServiceError, RegistrationPending](
                   RegistrationPending(
                     email = email,
                     verificationRequired = true
@@ -253,7 +253,7 @@ final class AuthService[F[_]: Async](
                 )
               case Left(error) =>
                 logger.error("Verification email delivery failed for {}", email, error)
-                Left(
+                Left[ServiceError, RegistrationPending](
                   Unavailable(
                     "verification email could not be sent; try resending it"
                   )
