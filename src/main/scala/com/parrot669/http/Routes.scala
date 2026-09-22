@@ -137,25 +137,9 @@ final class Routes[F[_]: Async](
         Ok(authService.currentUser(context))
       }
 
-    case request @ POST -> Root / "api" / "auth" / "claim-legacy" =>
-      authenticated(request) { context =>
-        decode[LegacyClaimRequest](request) { body =>
-          authService.claimLegacy(context, body).flatMap(result => respond(result))
-        }
-      }
-
     case request @ GET -> Root / "api" / "dashboard" =>
       authenticated(request) { context =>
         service.hostDashboard(context.profileId, context.profileId).flatMap(result => respond(result))
-      }
-
-    case request @ GET -> Root / "api" / "profiles" / profileIdRaw / "dashboard" =>
-      authenticated(request) { context =>
-        parseUuid(profileIdRaw) match {
-          case Left(error) => respondError(error)
-          case Right(profileId) =>
-            service.hostDashboard(profileId, context.profileId).flatMap(result => respond(result))
-        }
       }
 
     case request @ POST -> Root / "api" / "properties" =>
@@ -164,19 +148,6 @@ final class Routes[F[_]: Async](
           service
             .createProperty(context.profileId, context.profileId, body)
             .flatMap(result => respond(result, created = true))
-        }
-      }
-
-    case request @ POST -> Root / "api" / "profiles" / profileIdRaw / "properties" =>
-      authenticated(request) { context =>
-        parseUuid(profileIdRaw) match {
-          case Left(error) => respondError(error)
-          case Right(profileId) =>
-            decode[CreatePropertyRequest](request) { body =>
-              service
-                .createProperty(profileId, context.profileId, body)
-                .flatMap(result => respond(result, created = true))
-            }
         }
       }
 
