@@ -13,7 +13,10 @@ final case class AppConfig(
     environment: String,
     httpPort: Int,
     db: DbConfig,
-    adminToken: String
+    adminToken: String,
+    resendApiKey: Option[String],
+    resendFrom: String,
+    publicBaseUrl: String
 )
 
 object AppConfig {
@@ -43,6 +46,14 @@ object AppConfig {
           if (environment == "prod") None else Some("dev-admin-token-change-me")
         }
 
+      val resendApiKey = nonEmpty(env, "RESEND_API_KEY")
+      val resendFrom =
+        nonEmpty(env, "RESEND_FROM").getOrElse("PARROT 669 <hello@parrot669.com>")
+      val publicBaseUrl =
+        nonEmpty(env, "APP_PUBLIC_URL").getOrElse {
+          if (environment == "prod") "https://parrot669.com" else "http://localhost:8787"
+        }
+
       adminToken
         .toRight(new IllegalArgumentException("PARROT_ADMIN_TOKEN is required in prod"))
         .map { token =>
@@ -60,7 +71,10 @@ object AppConfig {
                 .orElse(nonEmpty(env, "DATABASE_PASSWORD"))
                 .getOrElse("parrot")
             ),
-            adminToken = token
+            adminToken = token,
+            resendApiKey = resendApiKey,
+            resendFrom = resendFrom,
+            publicBaseUrl = publicBaseUrl
           )
         }
     }
