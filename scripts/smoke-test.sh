@@ -84,13 +84,48 @@ fi
 
 AUTH_TEST_PASSWORD="ci-auth-password-12345"
 
-register_json=$(curl --fail --silent -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+register_json=$(curl --fail --silent \
   -X POST "http://localhost:$HTTP_PORT/api/auth/register" \
   -H 'content-type: application/json' \
   -d "{\"email\":\"ci@example.com\",\"password\":\"$AUTH_TEST_PASSWORD\",\"displayName\":\"CI Host\"}")
 
-profile_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["profile"]["id"])' <<<"$register_json")
-parrot_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["profile"]["parrotId"])' <<<"$register_json")
+REGISTER_JSON="$register_json" python3 - <<'PY'
+import json, os
+data = json.loads(os.environ["REGISTER_JSON"])
+assert data["email"] == "ci@example.com", data
+assert "verify" in data["message"].lower(), data
+print("Registration requires email verification")
+PY
+
+preverify_login_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  -X POST "http://localhost:$HTTP_PORT/api/auth/login" \
+  -H 'content-type: application/json' \
+  -d "{\"email\":\"ci@example.com\",\"password\":\"$AUTH_TEST_PASSWORD\"}")
+test "$preverify_login_status" = "401"
+
+command -v psql >/dev/null 2>&1 || {
+  echo "psql is required for the email-verification smoke test"
+  exit 1
+}
+
+CI_VERIFY_TOKEN="ci-verification-token"
+CI_VERIFY_HASH=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest())' "$CI_VERIFY_TOKEN")
+
+PGPASSWORD="$DATABASE_PASSWORD" psql \
+  -h localhost \
+  -p 5432 \
+  -U "$DATABASE_USER" \
+  -d parrot669 \
+  -v ON_ERROR_STOP=1 \
+  -c "update email_verification_tokens t set token_hash = '$CI_VERIFY_HASH' from accounts a where t.account_id = a.id and a.email_normalized = 'ci@example.com' and t.used_at is null;" >/dev/null
+
+verify_json=$(curl --fail --silent -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+  -X POST "http://localhost:$HTTP_PORT/api/auth/verify-email" \
+  -H 'content-type: application/json' \
+  -d "{\"token\":\"$CI_VERIFY_TOKEN\"}")
+
+profile_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["profile"]["id"])' <<<"$verify_json")
+parrot_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["profile"]["parrotId"])' <<<"$verify_json")
 
 me_json=$(curl --fail --silent -b "$COOKIE_JAR" "http://localhost:$HTTP_PORT/api/auth/me")
 ME_JSON="$me_json" python3 - "$profile_id" <<'PY'
@@ -98,7 +133,7 @@ import json, os, sys
 data = json.loads(os.environ["ME_JSON"])
 assert data["email"] == "ci@example.com", data
 assert data["profile"]["id"] == sys.argv[1], data
-print("Register and /me passed")
+print("Verify email and /me passed")
 PY
 
 unauthenticated_dashboard_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
@@ -148,10 +183,26 @@ property_json=$(curl --fail --silent -b "$COOKIE_JAR" \
 
 property_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$property_json")
 
-curl --fail --silent -c "$OTHER_COOKIE_JAR" -b "$OTHER_COOKIE_JAR" \
+curl --fail --silent \
   -X POST "http://localhost:$HTTP_PORT/api/auth/register" \
   -H 'content-type: application/json' \
   -d '{"email":"other@example.com","password":"other-ci-password-12345","displayName":"Other Host"}' >/dev/null
+
+OTHER_VERIFY_TOKEN="other-verification-token"
+OTHER_VERIFY_HASH=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.argv[1].encode()).hexdigest())' "$OTHER_VERIFY_TOKEN")
+
+PGPASSWORD="$DATABASE_PASSWORD" psql \
+  -h localhost \
+  -p 5432 \
+  -U "$DATABASE_USER" \
+  -d parrot669 \
+  -v ON_ERROR_STOP=1 \
+  -c "update email_verification_tokens t set token_hash = '$OTHER_VERIFY_HASH' from accounts a where t.account_id = a.id and a.email_normalized = 'other@example.com' and t.used_at is null;" >/dev/null
+
+curl --fail --silent -c "$OTHER_COOKIE_JAR" -b "$OTHER_COOKIE_JAR" \
+  -X POST "http://localhost:$HTTP_PORT/api/auth/verify-email" \
+  -H 'content-type: application/json' \
+  -d "{\"token\":\"$OTHER_VERIFY_TOKEN\"}" >/dev/null
 
 other_owner_update_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
   -b "$OTHER_COOKIE_JAR" \
