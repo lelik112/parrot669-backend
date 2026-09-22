@@ -11,6 +11,9 @@ set -euo pipefail
 export DATABASE_URL DATABASE_USER DATABASE_PASSWORD PARROT_ADMIN_TOKEN HTTP_PORT APP_ENV
 
 LOG_FILE="${TMPDIR:-/tmp}/parrot669-smoke.log"
+COOKIE_JAR=$(mktemp)
+OTHER_COOKIE_JAR=$(mktemp)
+CLAIM_COOKIE_JAR=$(mktemp)
 ICAL_DIR=$(mktemp -d)
 mkdir -p "$ICAL_DIR/calendar/ical"
 cat >"$ICAL_DIR/calendar/ical/123456789.ics" <<'ICS'
@@ -43,6 +46,7 @@ cleanup() {
   kill "$SERVER_PID" 2>/dev/null || true
   kill "$ICAL_SERVER_PID" 2>/dev/null || true
   rm -rf "$ICAL_DIR"
+  rm -f "$COOKIE_JAR" "$OTHER_COOKIE_JAR" "$CLAIM_COOKIE_JAR"
   pkill -f 'com.parrot669.Main' 2>/dev/null || true
 }
 trap cleanup EXIT
