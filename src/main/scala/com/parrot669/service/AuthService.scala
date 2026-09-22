@@ -122,8 +122,8 @@ final class AuthService[F[_]: Async](repo: AuthRepository[F]) {
       _ <- repo.createSession(session)
     } yield (raw, session)
 
-  private def loginKey(email: String, clientKey: String): String =
-    s"${email}|${normalized(clientKey).take(128)}"
+  private def loginKey(email: String): String =
+    email
 
   private def isRateLimited(key: String): Boolean =
     rateLimitLock.synchronized {
@@ -201,9 +201,9 @@ final class AuthService[F[_]: Async](repo: AuthRepository[F]) {
         }
     }
 
-  def login(req: LoginRequest, clientKey: String): F[Either[ServiceError, AuthResult]] = {
+  def login(req: LoginRequest): F[Either[ServiceError, AuthResult]] = {
     val email = normalizedEmail(req.email)
-    val key = loginKey(email, clientKey)
+    val key = loginKey(email)
 
     if (!validEmail(email) || req.password.isEmpty || req.password.length > 256)
       Async[F].pure(Left(Unauthorized("invalid email or password")))
