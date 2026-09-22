@@ -38,6 +38,13 @@ final class AuthRepository[F[_]: Async](xa: Transactor[F]) {
       where email_normalized = $emailNormalized
     """.query[AccountRecord].option.transact(xa)
 
+  def deleteUnusedEmailVerificationTokens(accountId: UUID): F[Unit] =
+    sql"""
+      delete from email_verification_tokens
+      where account_id = $accountId
+        and used_at is null
+    """.update.run.transact(xa).void
+
   def createEmailVerificationToken(token: EmailVerificationTokenRecord): F[Unit] =
     sql"""
       insert into email_verification_tokens (id, account_id, token_hash, created_at, expires_at, used_at)
