@@ -101,22 +101,6 @@ listing_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/p
 
 listing_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$listing_json")
 
-hidden_listing_json=$(curl --fail --silent -X PUT "http://localhost:$HTTP_PORT/api/listings/$listing_id"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"showInSearch":false}')
-
-hidden_link_search_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
-
-HIDDEN_LISTING_JSON="$hidden_listing_json" HIDDEN_LINK_SEARCH_JSON="$hidden_link_search_json" python3 - <<'PY'
-import json, os
-listing = json.loads(os.environ["HIDDEN_LISTING_JSON"])
-search = json.loads(os.environ["HIDDEN_LINK_SEARCH_JSON"])
-assert listing["showInSearch"] is False, listing
-assert len(search) == 1, search
-assert search[0]["links"] == [], search
-print("External listing search visibility passed")
-PY
-
-curl --fail --silent -X PUT "http://localhost:$HTTP_PORT/api/listings/$listing_id"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"showInSearch":true}' >/dev/null
-
 availability_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/properties/$property_id/availability"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"from":"2027-01-01","to":"2027-02-28","nightlyPriceCents":10000}')
 
 availability_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$availability_json")
@@ -179,6 +163,22 @@ assert data["to"] == "2027-03-05", data
 assert data["nightlyPriceCents"] == 10000, data
 print("Availability update passed")
 PY
+
+hidden_listing_json=$(curl --fail --silent -X PUT "http://localhost:$HTTP_PORT/api/listings/$listing_id"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"showInSearch":false}')
+
+hidden_link_search_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
+
+HIDDEN_LISTING_JSON="$hidden_listing_json" HIDDEN_LINK_SEARCH_JSON="$hidden_link_search_json" python3 - <<'PY'
+import json, os
+listing = json.loads(os.environ["HIDDEN_LISTING_JSON"])
+search = json.loads(os.environ["HIDDEN_LINK_SEARCH_JSON"])
+assert listing["showInSearch"] is False, listing
+assert len(search) == 1, search
+assert search[0]["links"] == [], search
+print("External listing search visibility passed")
+PY
+
+curl --fail --silent -X PUT "http://localhost:$HTTP_PORT/api/listings/$listing_id"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"showInSearch":true}' >/dev/null
 
 search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
 
