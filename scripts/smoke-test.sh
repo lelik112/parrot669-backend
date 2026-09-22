@@ -72,13 +72,61 @@ curl --fail --silent "http://localhost:$HTTP_PORT/health" >/dev/null || {
 
 AUTH_TEST_PASSWORD="ci-auth-password-12345"
 
-register_json=$(curl --fail --silent -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
-  -X POST "http://localhost:$HTTP_PORT/api/auth/register" \
-  -H 'content-type: application/json' \
-  -d "{\"email\":\"ci@example.com\",\"password\":\"$AUTH_TEST_PASSWORD\",\"displayName\":\"CI Host\"}")
+verification_token_for() {
+  local email="$1"
+  local line=""
+  for _ in $(seq 1 50); do
+    line=$(grep -F "EMAIL_VERIFICATION_LINK $email " "$LOG_FILE" | tail -n 1 || true)
+    if [[ -n "$line" ]]; then
+      local url="${line##* }"
+      local token="${url##*#verify=}"
+      if [[ -n "$token" && "$token" != "$url" ]]; then
+        printf '%s' "$token"
+        return 0
+      fi
+    fi
+    sleep 0.1
+  done
 
-profile_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["profile"]["id"])' <<<"$register_json")
-parrot_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["profile"]["parrotId"])' <<<"$register_json")
+  echo "Verification email token was not logged for $email" >&2
+  cat "$LOG_FILE" >&2
+  return 1
+}
+
+register_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/auth/register"   -H 'content-type: application/json'   -d "{\"email\":\"ci@example.com\",\"password\":\"$AUTH_TEST_PASSWORD\",\"displayName\":\"CI Host\"}")
+
+REGISTER_JSON="$register_json" python3 - <<'PY'
+import json, os
+data = json.loads(os.environ["REGISTER_JSON"])
+assert data["email"] == "ci@example.com", data
+assert data["verificationRequired"] is True, data
+print("Registration requires email verification")
+PY
+
+unverified_me_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   -b "$COOKIE_JAR" "http://localhost:$HTTP_PORT/api/auth/me")
+test "$unverified_me_status" = "401"
+
+unverified_login_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   -X POST "http://localhost:$HTTP_PORT/api/auth/login"   -H 'content-type: application/json'   -d "{\"email\":\"ci@example.com\",\"password\":\"$AUTH_TEST_PASSWORD\"}")
+test "$unverified_login_status" = "403"
+
+unknown_resend_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   -X POST "http://localhost:$HTTP_PORT/api/auth/resend-verification"   -H 'content-type: application/json'   -d '{"email":"nobody@example.com"}')
+test "$unknown_resend_status" = "202"
+
+verification_token=$(verification_token_for "ci@example.com")
+verify_json=$(curl --fail --silent -c "$COOKIE_JAR" -b "$COOKIE_JAR"   -X POST "http://localhost:$HTTP_PORT/api/auth/verify-email"   -H 'content-type: application/json'   -d "{\"token\":\"$verification_token\"}")
+
+profile_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["profile"]["id"])' <<<"$verify_json")
+parrot_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["profile"]["parrotId"])' <<<"$verify_json")
+
+VERIFY_JSON="$verify_json" python3 - <<'PY'
+import json, os
+data = json.loads(os.environ["VERIFY_JSON"])
+assert data["email"] == "ci@example.com", data
+print("Email verification created authenticated session")
+PY
+
+reused_verification_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   -X POST "http://localhost:$HTTP_PORT/api/auth/verify-email"   -H 'content-type: application/json'   -d "{\"token\":\"$verification_token\"}")
+test "$reused_verification_status" = "400"
 
 me_json=$(curl --fail --silent -b "$COOKIE_JAR" "http://localhost:$HTTP_PORT/api/auth/me")
 ME_JSON="$me_json" python3 - "$profile_id" <<'PY'
@@ -86,47 +134,33 @@ import json, os, sys
 data = json.loads(os.environ["ME_JSON"])
 assert data["email"] == "ci@example.com", data
 assert data["profile"]["id"] == sys.argv[1], data
-print("Register and /me passed")
+print("Verified /me passed")
 PY
 
-unauthenticated_dashboard_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
-  "http://localhost:$HTTP_PORT/api/dashboard")
+unauthenticated_dashboard_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   "http://localhost:$HTTP_PORT/api/dashboard")
 test "$unauthenticated_dashboard_status" = "401"
 
-curl --fail --silent -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
-  -X POST "http://localhost:$HTTP_PORT/api/auth/logout" --output /dev/null
+curl --fail --silent -b "$COOKIE_JAR" -c "$COOKIE_JAR"   -X POST "http://localhost:$HTTP_PORT/api/auth/logout" --output /dev/null
 
-logged_out_me_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
-  -b "$COOKIE_JAR" "http://localhost:$HTTP_PORT/api/auth/me")
+logged_out_me_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   -b "$COOKIE_JAR" "http://localhost:$HTTP_PORT/api/auth/me")
 test "$logged_out_me_status" = "401"
 
-wrong_password_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
-  -X POST "http://localhost:$HTTP_PORT/api/auth/login" \
-  -H 'content-type: application/json' \
-  -d '{"email":"ci@example.com","password":"wrong-password-value"}')
+wrong_password_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   -X POST "http://localhost:$HTTP_PORT/api/auth/login"   -H 'content-type: application/json'   -d '{"email":"ci@example.com","password":"wrong-password-value"}')
 test "$wrong_password_status" = "401"
 
-login_json=$(curl --fail --silent -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
-  -X POST "http://localhost:$HTTP_PORT/api/auth/login" \
-  -H 'content-type: application/json' \
-  -d "{\"email\":\"CI@EXAMPLE.COM\",\"password\":\"$AUTH_TEST_PASSWORD\"}")
+login_json=$(curl --fail --silent -c "$COOKIE_JAR" -b "$COOKIE_JAR"   -X POST "http://localhost:$HTTP_PORT/api/auth/login"   -H 'content-type: application/json'   -d "{\"email\":\"CI@EXAMPLE.COM\",\"password\":\"$AUTH_TEST_PASSWORD\"}")
 
 LOGIN_JSON="$login_json" python3 - "$profile_id" <<'PY'
 import json, os, sys
 data = json.loads(os.environ["LOGIN_JSON"])
 assert data["profile"]["id"] == sys.argv[1], data
-print("Login passed")
+print("Verified login passed")
 PY
 
-legacy_claim_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
-  -b "$COOKIE_JAR" \
-  -X POST "http://localhost:$HTTP_PORT/api/auth/claim-legacy" \
-  -H 'content-type: application/json' \
-  -d '{"profileId":"11111111-1111-4111-8111-111111111111","editToken":"obsolete"}')
+legacy_claim_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   -b "$COOKIE_JAR"   -X POST "http://localhost:$HTTP_PORT/api/auth/claim-legacy"   -H 'content-type: application/json'   -d '{"profileId":"11111111-1111-4111-8111-111111111111","editToken":"obsolete"}')
 test "$legacy_claim_status" = "404"
 
-legacy_dashboard_alias_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
-  -b "$COOKIE_JAR" "http://localhost:$HTTP_PORT/api/profiles/$profile_id/dashboard")
+legacy_dashboard_alias_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   -b "$COOKIE_JAR" "http://localhost:$HTTP_PORT/api/profiles/$profile_id/dashboard")
 test "$legacy_dashboard_alias_status" = "404"
 
 property_json=$(curl --fail --silent -b "$COOKIE_JAR" \
@@ -136,10 +170,16 @@ property_json=$(curl --fail --silent -b "$COOKIE_JAR" \
 
 property_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$property_json")
 
-curl --fail --silent -c "$OTHER_COOKIE_JAR" -b "$OTHER_COOKIE_JAR" \
+curl --fail --silent \
   -X POST "http://localhost:$HTTP_PORT/api/auth/register" \
   -H 'content-type: application/json' \
   -d '{"email":"other@example.com","password":"other-ci-password-12345","displayName":"Other Host"}' >/dev/null
+
+other_verification_token=$(verification_token_for "other@example.com")
+curl --fail --silent -c "$OTHER_COOKIE_JAR" -b "$OTHER_COOKIE_JAR" \
+  -X POST "http://localhost:$HTTP_PORT/api/auth/verify-email" \
+  -H 'content-type: application/json' \
+  -d "{\"token\":\"$other_verification_token\"}" >/dev/null
 
 other_owner_update_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
   -b "$OTHER_COOKIE_JAR" \
