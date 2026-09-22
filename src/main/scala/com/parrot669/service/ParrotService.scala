@@ -6,11 +6,10 @@ import com.parrot669.domain._
 import com.parrot669.repo.ParrotRepository
 import com.parrot669.integration.{AirbnbIcal, IcalFetcher}
 
-import java.nio.charset.StandardCharsets
-import java.security.{MessageDigest, SecureRandom}
+import java.security.SecureRandom
 import java.time.{LocalDate, OffsetDateTime, ZoneId, ZoneOffset}
 import java.time.temporal.ChronoUnit
-import java.util.{Base64, UUID}
+import java.util.UUID
 import scala.util.Try
 
 sealed trait ServiceError {
@@ -28,50 +27,6 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
   import ServiceError._
 
   private val random = new SecureRandom()
-  private val parrotAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-  private val barcelonaZone = ZoneId.of("Europe/Madrid")
-  private val accommodationTypes = Set("entire_place", "private_room")
-
-  private def now: F[OffsetDateTime] =
-    Clock[F].realTimeInstant.map(_.atOffset(ZoneOffset.UTC))
-
-  private def uuid: F[UUID] =
-    Async[F].delay(UUID.randomUUID())
-
-  private def normalized(value: String): String =
-    Option(value).fold("")(_.trim)
-
-  private def fail[A](error: ServiceError): F[Either[ServiceError, A]] =
-    Async[F].pure(Left(error))
-
-  private def randomParrotId: F[String] =
-    Async[F].delay {
-      val suffix = (1 to 8).map { _ =>
-        parrotAlphabet.charAt(random.nextInt(parrotAlphabet.length))
-      }.mkString
-      s"P669-$suffix"
-    }
-
-  private def randomEditToken: F[String] =
-    Async[F].delay {
-      val bytes = new Array[Byte](32)
-      random.nextBytes(bytes)
-      Base64.getUrlEncoder.withoutPadding().encodeToString(bytes)
-    }
-
-  private def tokenHash(raw: String): String = {
-    val bytes = MessageDigest
-      .getInstance("SHA-256")
-      .digest(raw.getBytes(StandardCharsets.UTF_8))
-    bytes.iterator.map(b => f"${b & 0xff}%02x").mkString
-  }
-
-  private def tokenMatches(raw: String, storedHash: String): Boolean = {
-    val candidate = tokenHash(raw).getBytes(StandardCharsets.UTF_8)
-    val stored = storedHash.getBytes(StandardCharsets.UTF_8)
-    MessageDigest.isEqual(candidate, stored)
-  }
-
   private def parseDate(raw: String, field: String): Either[ServiceError, LocalDate] =
     Try(LocalDate.parse(normalized(raw))).toEither.leftMap(_ => Invalid(s"$field must be YYYY-MM-DD"))
 
@@ -84,17 +39,6 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
       case Some(value) if accommodationTypes.contains(value) => Right(Some(value))
       case Some(_) => Left(Invalid("accommodationType must be entire_place or private_room"))
     }
-
-  private def validateProfile(req: CreateProfileRequest): Either[ServiceError, Unit] = {
-    val name = normalized(req.displayName)
-    val contact = normalized(req.contact)
-
-    if (name.isEmpty) Left(Invalid("displayName is required"))
-    else if (name.length > 120) Left(Invalid("displayName is too long"))
-    else if (contact.isEmpty) Left(Invalid("contact is required"))
-    else if (contact.length > 200) Left(Invalid("contact is too long"))
-    else Right(())
-  }
 
   private def validateProperty(req: CreatePropertyRequest): Either[ServiceError, Unit] = {
     val title = normalized(req.title)
@@ -231,35 +175,6 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
     } yield result
 
   def health: F[Boolean] = repo.health
-
-  def createProfile(req: CreateProfileRequest): F[Either[ServiceError, ProfileCreated]] =
-    validateProfile(req) match {
-      case Left(error) => fail[ProfileCreated](error)
-      case Right(_) =>
-        for {
-          id <- uuid
-          parrotId <- randomParrotId
-          rawToken <- randomEditToken
-          createdAt <- now
-          record = ProfileRecord(
-            id = id,
-            parrotId = parrotId,
-            displayName = normalized(req.displayName),
-            contact = normalized(req.contact),
-            accessTokenHash = Some(tokenHash(rawToken)),
-            createdAt = createdAt
-          )
-          saved <- repo.createProfile(record)
-        } yield ProfileCreated(
-          id = saved.id.toString,
-          profile = PublicProfile(
-            parrotId = saved.parrotId,
-            displayName = saved.displayName,
-            createdAt = saved.createdAt.toString
-          ),
-          editToken = rawToken
-        ).asRight[ServiceError]
-    }
 
   def createProperty(
       profileId: UUID,
