@@ -38,6 +38,27 @@ final class AuthRepository[F[_]: Async](xa: Transactor[F]) {
       where email_normalized = $emailNormalized
     """.query[AccountRecord].option.transact(xa)
 
+  def createEmailVerificationToken(token: EmailVerificationTokenRecord): F[Unit] =
+    sql"""
+      insert into email_verification_tokens (id, account_id, token_hash, created_at, expires_at, used_at)
+      values (${token.id}, ${token.accountId}, ${token.tokenHash}, ${token.createdAt}, ${token.expiresAt}, ${token.usedAt})
+    """.update.run.transact(xa).void
+
+  def findEmailVerificationToken(tokenHash: String): F[Option[EmailVerificationTokenRecord]] =
+    sql"""
+      select id, account_id, token_hash, created_at, expires_at, used_at
+      from email_verification_tokens
+      where token_hash = $tokenHash
+      limit 1
+    """.query[EmailVerificationTokenRecord].option.transact(xa)
+
+  def markEmailVerified(accountId: UUID, verifiedAt: OffsetDateTime): F[Unit] =
+    sql"""
+      update accounts
+      set email_verified = true
+      where id = $accountId
+    """.update.run.transact(xa).void
+
   def createSession(session: SessionRecord): F[Unit] =
     sql"""
       insert into sessions (id, account_id, token_hash, created_at, expires_at)
@@ -69,6 +90,4 @@ final class AuthRepository[F[_]: Async](xa: Transactor[F]) {
 
   def deleteExpiredSessions(now: OffsetDateTime): F[Unit] =
     sql"delete from sessions where expires_at <= $now".update.run.transact(xa).void
-
-
 }
