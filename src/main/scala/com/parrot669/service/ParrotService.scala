@@ -27,6 +27,21 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
   import ServiceError._
 
   private val random = new SecureRandom()
+  private val barcelonaZone = ZoneId.of("Europe/Madrid")
+  private val accommodationTypes = Set("entire_place", "private_room")
+
+  private def now: F[OffsetDateTime] =
+    Clock[F].realTimeInstant.map(_.atOffset(ZoneOffset.UTC))
+
+  private def uuid: F[UUID] =
+    Async[F].delay(UUID.randomUUID())
+
+  private def normalized(value: String): String =
+    Option(value).fold("")(_.trim)
+
+  private def fail[A](error: ServiceError): F[Either[ServiceError, A]] =
+    Async[F].pure(Left(error))
+
   private def parseDate(raw: String, field: String): Either[ServiceError, LocalDate] =
     Try(LocalDate.parse(normalized(raw))).toEither.leftMap(_ => Invalid(s"$field must be YYYY-MM-DD"))
 
