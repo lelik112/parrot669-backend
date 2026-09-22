@@ -45,7 +45,7 @@ final class ResendEmailSender[F[_]: Async](
 
       if (response.statusCode() / 100 != 2)
         throw new IllegalStateException(
-          s"Resend email delivery failed with HTTP ${response.statusCode()}"
+          s"Resend email delivery failed: status=${response.statusCode()}, body=${response.body()}"
         )
     }
 }
