@@ -264,19 +264,19 @@ final class AuthService[F[_]: Async](
           case Some(value) if value.usedAt.isEmpty && value.expiresAt.isAfter(current) =>
             repo.consumeEmailVerificationToken(value.id, current).flatMap {
               case false =>
-                Async[F].pure(Left(Invalid("verification token is invalid or expired")))
+                Async[F].pure(Invalid("verification token is invalid or expired").asLeft[AuthResult])
               case true =>
                 for {
                   _ <- repo.markEmailVerified(value.accountId)
                   session <- createSession(value.accountId)
                   context <- repo.authContextForAccount(value.accountId)
                 } yield context match {
-                  case Some(authContext) => Right(AuthResult(toUser(authContext), session._1))
-                  case None              => Left(Unauthorized("account has no host profile"))
+                  case Some(authContext) => AuthResult(toUser(authContext), session._1).asRight[ServiceError]
+                  case None              => Unauthorized("account has no host profile").asLeft[AuthResult]
                 }
             }
           case _ =>
-            Async[F].pure(Left(Invalid("verification token is invalid or expired")))
+            Async[F].pure(Invalid("verification token is invalid or expired").asLeft[AuthResult])
         }
       } yield result
   }
