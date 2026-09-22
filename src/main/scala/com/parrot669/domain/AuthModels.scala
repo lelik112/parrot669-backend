@@ -56,14 +56,6 @@ final case class AccountRecord(
     createdAt: OffsetDateTime
 )
 
-final case class ProfileRecord(
-    id: UUID,
-    parrotId: String,
-    displayName: String,
-    contact: String,
-    createdAt: OffsetDateTime
-)
-
 final case class SessionRecord(
     id: UUID,
     accountId: UUID,
