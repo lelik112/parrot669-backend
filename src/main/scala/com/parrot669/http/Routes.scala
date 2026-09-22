@@ -3,23 +3,60 @@ package com.parrot669.http
 import cats.effect.Async
 import cats.syntax.all._
 import com.parrot669.domain._
-import com.parrot669.service.{ParrotService, ServiceError}
+import com.parrot669.service.{AuthService, ParrotService, ServiceError}
 import io.circe.Encoder
 import io.circe.generic.auto._
 import org.http4s._
 import org.http4s.circe.CirceEntityCodec._
 import org.http4s.dsl.Http4sDsl
+import org.typelevel.ci.CIStringSyntax
 
 import java.util.UUID
 import scala.util.Try
 
-final class Routes[F[_]: Async](service: ParrotService[F], adminToken: String) extends Http4sDsl[F] {
+final class Routes[F[_]: Async](
+    service: ParrotService[F],
+    authService: AuthService[F],
+    adminToken: String,
+    secureCookies: Boolean
+) extends Http4sDsl[F] {
+
+  private val sessionCookieName = "parrot_session"
+  private val sessionMaxAgeSeconds = 30L * 24L * 60L * 60L
 
   private def header(request: Request[F], name: String): String =
     request.headers.headers
       .find(_.name.toString.equalsIgnoreCase(name))
       .map(_.value)
       .getOrElse("")
+
+  private def sessionToken(request: Request[F]): String =
+    header(request, "Cookie")
+      .split(";")
+      .iterator
+      .map(_.trim)
+      .find(_.startsWith(sessionCookieName + "="))
+      .map(_.drop(sessionCookieName.length + 1))
+      .getOrElse("")
+
+  private def clientKey(request: Request[F]): String =
+    Option(header(request, "X-Parrot-Client-IP")).filter(_.nonEmpty).getOrElse("direct")
+
+  private def sessionCookie(rawToken: String): Header.Raw = {
+    val secure = if (secureCookies) "; Secure" else ""
+    Header.Raw(
+      ci"Set-Cookie",
+      s"$sessionCookieName=$rawToken; Path=/; HttpOnly$secure; SameSite=Lax; Max-Age=$sessionMaxAgeSeconds"
+    )
+  }
+
+  private def clearSessionCookie: Header.Raw = {
+    val secure = if (secureCookies) "; Secure" else ""
+    Header.Raw(
+      ci"Set-Cookie",
+      s"$sessionCookieName=; Path=/; HttpOnly$secure; SameSite=Lax; Max-Age=0"
+    )
+  }
 
   private def parseUuid(raw: String): Either[ServiceError, UUID] =
     Try(UUID.fromString(raw)).toEither.leftMap(_ => ServiceError.Invalid("invalid UUID"))
@@ -37,6 +74,8 @@ final class Routes[F[_]: Async](service: ParrotService[F], adminToken: String) e
         )
       case ServiceError.Conflict(message) =>
         Conflict(ErrorResponse(message))
+      case ServiceError.RateLimited(message) =>
+        TooManyRequests(ErrorResponse(message))
     }
 
   private def respond[A: Encoder](
@@ -55,6 +94,14 @@ final class Routes[F[_]: Async](service: ParrotService[F], adminToken: String) e
     request.as[A].attempt.flatMap {
       case Left(_)      => BadRequest(ErrorResponse("invalid JSON body"))
       case Right(value) => f(value)
+    }
+
+  private def authenticated(request: Request[F])(
+      f: AuthContext => F[Response[F]]
+  ): F[Response[F]] =
+    authService.authenticate(sessionToken(request)).flatMap {
+      case Right(context) => f(context)
+      case Left(error)    => respondError(error)
     }
 
   val routes: HttpRoutes[F] = HttpRoutes.of[F] {
