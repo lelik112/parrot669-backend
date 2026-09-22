@@ -21,6 +21,7 @@ final case class PropertyRecord(
     bedrooms: Int,
     sleeps: Int,
     minStayDays: Int,
+    cleaningFeeCents: Option[Long],
     createdAt: OffsetDateTime
 )
 
@@ -67,7 +68,8 @@ final case class ExternalCalendarRecord(
     lastSuccessAt: Option[OffsetDateTime],
     lastError: Option[String],
     createdAt: OffsetDateTime,
-    updatedAt: OffsetDateTime
+    updatedAt: OffsetDateTime,
+    enabled: Boolean
 )
 
 final case class ExternalCalendarEventRecord(
@@ -111,12 +113,14 @@ final case class CreatePropertyRequest(
     accommodationType: Option[String],
     bedrooms: Int,
     sleeps: Int,
-    minStayDays: Int
+    minStayDays: Option[Int]
 )
+final case class UpdatePropertyRequest(minStayDays: Int, cleaningFeeCents: Option[Long])
 final case class AddListingRequest(platform: String, externalId: String, cleaningFeeCents: Option[Long])
 final case class UpdateListingRequest(cleaningFeeCents: Option[Long])
 final case class AddAvailabilityRequest(from: String, to: String, nightlyPriceCents: Option[Long])
 final case class ConnectExternalCalendarRequest(provider: String, icalUrl: String)
+final case class UpdateExternalCalendarRequest(enabled: Boolean)
 
 final case class PublicProfile(
     parrotId: String,
@@ -176,6 +180,7 @@ final case class CalendarEventView(
 final case class ExternalCalendarView(
     id: String,
     provider: String,
+    enabled: Boolean,
     status: String,
     lastSyncedAt: Option[String],
     lastSuccessAt: Option[String],
@@ -193,6 +198,7 @@ final case class HostProperty(
     bedrooms: Int,
     sleeps: Int,
     minStayDays: Int,
+    cleaningFeeCents: Option[Long],
     createdAt: String,
     listings: List[PublicListing],
     availability: List[AvailabilityCreated],
@@ -212,6 +218,7 @@ final case class PropertyCreated(
     bedrooms: Int,
     sleeps: Int,
     minStayDays: Int,
+    cleaningFeeCents: Option[Long],
     createdAt: String
 )
 

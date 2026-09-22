@@ -44,20 +44,40 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
     sql"""
       insert into properties (
         id, profile_id, title, city, city_code, accommodation_type,
-        bedrooms, sleeps, min_stay_days, created_at
+        bedrooms, sleeps, min_stay_days, cleaning_fee_cents, created_at
       )
       values (
         ${property.id}, ${property.profileId}, ${property.title},
         ${property.city}, 'barcelona', ${property.accommodationType},
-        ${property.bedrooms}, ${property.sleeps}, ${property.minStayDays}, ${property.createdAt}
+        ${property.bedrooms}, ${property.sleeps}, ${property.minStayDays}, ${property.cleaningFeeCents}, ${property.createdAt}
       )
-      returning id, profile_id, title, city, accommodation_type, bedrooms, sleeps, min_stay_days, created_at
+      returning id, profile_id, title, city, accommodation_type, bedrooms, sleeps, min_stay_days, cleaning_fee_cents, created_at
     """.query[PropertyRecord].unique.transact(xa)
 
   def propertyOwnerProfileId(propertyId: UUID): F[Option[UUID]] =
     sql"select profile_id from properties where id = $propertyId"
       .query[UUID]
       .option
+      .transact(xa)
+
+  def updatePropertySettings(
+      propertyId: UUID,
+      minStayDays: Int,
+      cleaningFeeCents: Option[Long]
+  ): F[Option[PropertyRecord]] =
+    sql"""
+      update properties
+      set min_stay_days = $minStayDays,
+          cleaning_fee_cents = $cleaningFeeCents
+      where id = $propertyId
+      returning id, profile_id, title, city, accommodation_type, bedrooms, sleeps,
+                min_stay_days, cleaning_fee_cents, created_at
+    """.query[PropertyRecord].option.transact(xa)
+
+  def propertyCleaningFee(propertyId: UUID): F[Option[Long]] =
+    sql"select cleaning_fee_cents from properties where id = $propertyId"
+      .query[Option[Long]]
+      .unique
       .transact(xa)
 
   def deleteProperty(propertyId: UUID): F[Boolean] =
@@ -198,6 +218,7 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
             from external_calendar_events e
             join external_calendars ec on ec.id = e.calendar_id
             where ec.property_id = c.id
+              and ec.enabled = true
               and e.kind = 'reservation'
               and e.date_from <= n.night
               and e.date_to > n.night
@@ -302,19 +323,20 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
       saved <- sql"""
         insert into external_calendars (
           id, property_id, provider, ical_url, status,
-          last_synced_at, last_success_at, last_error, created_at, updated_at
+          last_synced_at, last_success_at, last_error, created_at, updated_at, enabled
         ) values (
           ${calendar.id}, ${calendar.propertyId}, ${calendar.provider}, ${calendar.icalUrl}, ${calendar.status},
           ${calendar.lastSyncedAt}, ${calendar.lastSuccessAt}, ${calendar.lastError},
-          ${calendar.createdAt}, ${calendar.updatedAt}
+          ${calendar.createdAt}, ${calendar.updatedAt}, ${calendar.enabled}
         )
         on conflict (property_id, provider) do update
         set ical_url = excluded.ical_url,
             status = 'pending',
             last_error = null,
-            updated_at = excluded.updated_at
+            updated_at = excluded.updated_at,
+            enabled = true
         returning id, property_id, provider, ical_url, status,
-                  last_synced_at, last_success_at, last_error, created_at, updated_at
+                  last_synced_at, last_success_at, last_error, created_at, updated_at, enabled
       """.query[ExternalCalendarRecord].unique
     } yield saved
 
@@ -324,7 +346,7 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
   def externalCalendar(calendarId: UUID): F[Option[ExternalCalendarRecord]] =
     sql"""
       select id, property_id, provider, ical_url, status,
-             last_synced_at, last_success_at, last_error, created_at, updated_at
+             last_synced_at, last_success_at, last_error, created_at, updated_at, enabled
       from external_calendars
       where id = $calendarId
     """.query[ExternalCalendarRecord].option.transact(xa)
@@ -332,7 +354,7 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
   def externalCalendarsForProperty(propertyId: UUID): F[List[ExternalCalendarRecord]] =
     sql"""
       select id, property_id, provider, ical_url, status,
-             last_synced_at, last_success_at, last_error, created_at, updated_at
+             last_synced_at, last_success_at, last_error, created_at, updated_at, enabled
       from external_calendars
       where property_id = $propertyId
       order by created_at asc
@@ -341,8 +363,9 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
   def allExternalCalendars: F[List[ExternalCalendarRecord]] =
     sql"""
       select id, property_id, provider, ical_url, status,
-             last_synced_at, last_success_at, last_error, created_at, updated_at
+             last_synced_at, last_success_at, last_error, created_at, updated_at, enabled
       from external_calendars
+      where enabled = true
       order by updated_at asc
     """.query[ExternalCalendarRecord].to[List].transact(xa)
 
@@ -388,7 +411,7 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
             updated_at = $syncedAt
         where id = $calendarId
         returning id, property_id, provider, ical_url, status,
-                  last_synced_at, last_success_at, last_error, created_at, updated_at
+                  last_synced_at, last_success_at, last_error, created_at, updated_at, enabled
       """.query[ExternalCalendarRecord].unique
     } yield saved
 
@@ -408,8 +431,22 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
           updated_at = $attemptedAt
       where id = $calendarId
       returning id, property_id, provider, ical_url, status,
-                last_synced_at, last_success_at, last_error, created_at, updated_at
+                last_synced_at, last_success_at, last_error, created_at, updated_at, enabled
     """.query[ExternalCalendarRecord].unique.transact(xa)
+
+  def setExternalCalendarEnabled(
+      calendarId: UUID,
+      enabled: Boolean,
+      updatedAt: OffsetDateTime
+  ): F[Option[ExternalCalendarRecord]] =
+    sql"""
+      update external_calendars
+      set enabled = $enabled,
+          updated_at = $updatedAt
+      where id = $calendarId
+      returning id, property_id, provider, ical_url, status,
+                last_synced_at, last_success_at, last_error, created_at, updated_at, enabled
+    """.query[ExternalCalendarRecord].option.transact(xa)
 
   def deleteExternalCalendar(calendarId: UUID): F[Boolean] =
     sql"delete from external_calendars where id = $calendarId"
@@ -550,7 +587,7 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
 
   def propertiesForProfile(profileId: UUID): F[List[PropertyRecord]] =
     sql"""
-      select id, profile_id, title, city, accommodation_type, bedrooms, sleeps, min_stay_days, created_at
+      select id, profile_id, title, city, accommodation_type, bedrooms, sleeps, min_stay_days, cleaning_fee_cents, created_at
       from properties
       where profile_id = $profileId
       order by created_at asc

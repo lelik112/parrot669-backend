@@ -73,11 +73,21 @@ profile_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<
 parrot_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["profile"]["parrotId"])' <<<"$profile_json")
 edit_token=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["editToken"])' <<<"$profile_json")
 
-property_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/profiles/$profile_id/properties"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"title":"CI Apartment","city":"Barcelona","accommodationType":"entire_place","bedrooms":2,"sleeps":5,"minStayDays":7}')
+property_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/profiles/$profile_id/properties"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"title":"CI Apartment","city":"Barcelona","accommodationType":"entire_place","bedrooms":2,"sleeps":5}')
 
 property_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$property_json")
 
-listing_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/properties/$property_id/listings"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"platform":"airbnb","externalId":"123456789","cleaningFeeCents":5500}')
+property_settings_json=$(curl --fail --silent -X PUT "http://localhost:$HTTP_PORT/api/properties/$property_id"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"minStayDays":7,"cleaningFeeCents":5500}')
+
+PROPERTY_SETTINGS_JSON="$property_settings_json" python3 - <<'PY'
+import json, os
+data = json.loads(os.environ["PROPERTY_SETTINGS_JSON"])
+assert data["minStayDays"] == 7, data
+assert data["cleaningFeeCents"] == 5500, data
+print("Property settings update passed")
+PY
+
+listing_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/properties/$property_id/listings"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"platform":"airbnb","externalId":"123456789"}')
 
 listing_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$listing_json")
 
@@ -99,8 +109,10 @@ p = data["properties"][0]
 assert p["id"] == property_id, p
 assert p["title"] == "CI Apartment", p
 assert p["accommodationType"] == "entire_place", p
+assert p["cleaningFeeCents"] == 5500, p
+assert p["minStayDays"] == 7, p
 assert p["listings"][0]["id"] == listing_id, p
-assert p["listings"][0]["cleaningFeeCents"] == 5500, p
+assert p["listings"][0]["cleaningFeeCents"] is None, p
 assert p["availability"][0]["id"] == availability_id, p
 assert p["availability"][0]["nightlyPriceCents"] == 10000, p
 print("Host dashboard passed")
@@ -271,6 +283,32 @@ assert len(platform_unavailable) == 1, platform_unavailable
 print("Airbnb reservation blocking semantics passed")
 PY
 
+disabled_calendar_json=$(curl --fail --silent -X PUT   "http://localhost:$HTTP_PORT/api/calendars/$calendar_id"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"enabled":false}')
+
+disabled_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
+
+DISABLED_CALENDAR_JSON="$disabled_calendar_json" DISABLED_SEARCH_JSON="$disabled_search_json" python3 - <<'PY'
+import json, os
+calendar = json.loads(os.environ["DISABLED_CALENDAR_JSON"])
+search = json.loads(os.environ["DISABLED_SEARCH_JSON"])
+assert calendar["enabled"] is False, calendar
+assert len(search) == 1, search
+print("Disabled calendar no longer blocks search")
+PY
+
+enabled_calendar_json=$(curl --fail --silent -X PUT   "http://localhost:$HTTP_PORT/api/calendars/$calendar_id"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"enabled":true}')
+
+enabled_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
+
+ENABLED_CALENDAR_JSON="$enabled_calendar_json" ENABLED_SEARCH_JSON="$enabled_search_json" python3 - <<'PY'
+import json, os
+calendar = json.loads(os.environ["ENABLED_CALENDAR_JSON"])
+search = json.loads(os.environ["ENABLED_SEARCH_JSON"])
+assert calendar["enabled"] is True, calendar
+assert search == [], search
+print("Re-enabled calendar blocks search again")
+PY
+
 calendar_dashboard_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/profiles/$profile_id/dashboard"   -H "X-Parrot-Token: $edit_token")
 
 CALENDAR_DASHBOARD_JSON="$calendar_dashboard_json" python3 - "$calendar_id" <<'PY'
@@ -419,13 +457,13 @@ assert data["method"] == "calendar_challenge", data
 print("Verification response passed")
 PY
 
-updated_listing_json=$(curl --fail --silent -X PUT   "http://localhost:$HTTP_PORT/api/listings/$listing_id"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"cleaningFeeCents":6500}')
+updated_property_json=$(curl --fail --silent -X PUT   "http://localhost:$HTTP_PORT/api/properties/$property_id"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"minStayDays":7,"cleaningFeeCents":6500}')
 
-UPDATED_LISTING_JSON="$updated_listing_json" python3 - <<'PY'
+UPDATED_PROPERTY_JSON="$updated_property_json" python3 - <<'PY'
 import json, os
-data = json.loads(os.environ["UPDATED_LISTING_JSON"])
+data = json.loads(os.environ["UPDATED_PROPERTY_JSON"])
 assert data["cleaningFeeCents"] == 6500, data
-print("Listing cleaning fee update passed")
+print("Property cleaning fee update passed")
 PY
 
 wrong_listing_delete_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   -X DELETE "http://localhost:$HTTP_PORT/api/listings/$listing_id"   -H 'X-Parrot-Token: definitely-wrong-token')

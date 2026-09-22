@@ -105,7 +105,8 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
       Left(Invalid("accommodationType must be entire_place or private_room"))
     else if (req.bedrooms < 1 || req.bedrooms > 20) Left(Invalid("bedrooms must be between 1 and 20"))
     else if (req.sleeps < 1 || req.sleeps > 40) Left(Invalid("sleeps must be between 1 and 40"))
-    else if (req.minStayDays < 1 || req.minStayDays > 365) Left(Invalid("minStayDays must be between 1 and 365"))
+    else if (req.minStayDays.exists(days => days < 1 || days > 365))
+      Left(Invalid("minStayDays must be between 1 and 365"))
     else Right(())
   }
 
@@ -170,6 +171,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
     ExternalCalendarView(
       id = calendar.id.toString,
       provider = calendar.provider,
+      enabled = calendar.enabled,
       status = calendar.status,
       lastSyncedAt = calendar.lastSyncedAt.map(_.toString),
       lastSuccessAt = calendar.lastSuccessAt.map(_.toString),
@@ -284,7 +286,8 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
                   accommodationType = propertyAccommodationType(req.accommodationType),
                   bedrooms = req.bedrooms,
                   sleeps = req.sleeps,
-                  minStayDays = req.minStayDays,
+                  minStayDays = req.minStayDays.getOrElse(1),
+                  cleaningFeeCents = None,
                   createdAt = createdAt
                 )
               )
@@ -296,10 +299,47 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
               bedrooms = saved.bedrooms,
               sleeps = saved.sleeps,
               minStayDays = saved.minStayDays,
+              cleaningFeeCents = saved.cleaningFeeCents,
               createdAt = saved.createdAt.toString
             ).asRight[ServiceError]
         }
     }
+
+  def updateProperty(
+      propertyId: UUID,
+      editToken: String,
+      req: UpdatePropertyRequest
+  ): F[Either[ServiceError, PropertyCreated]] =
+    if (req.minStayDays < 1 || req.minStayDays > 365)
+      fail[PropertyCreated](Invalid("minStayDays must be between 1 and 365"))
+    else if (!validCleaningFee(req.cleaningFeeCents))
+      fail[PropertyCreated](Invalid("cleaningFeeCents must be between 0 and 10000000 when provided"))
+    else
+      repo.propertyOwnerProfileId(propertyId).flatMap {
+        case None => fail[PropertyCreated](NotFound("property not found"))
+        case Some(profileId) =>
+          authorize(profileId, editToken).flatMap {
+            case Left(error) => fail[PropertyCreated](error)
+            case Right(_) =>
+              repo.updatePropertySettings(propertyId, req.minStayDays, req.cleaningFeeCents).flatMap {
+                case None => fail[PropertyCreated](NotFound("property not found"))
+                case Some(saved) =>
+                  Async[F].pure(
+                    PropertyCreated(
+                      id = saved.id.toString,
+                      title = saved.title,
+                      city = saved.city,
+                      accommodationType = saved.accommodationType,
+                      bedrooms = saved.bedrooms,
+                      sleeps = saved.sleeps,
+                      minStayDays = saved.minStayDays,
+                      cleaningFeeCents = saved.cleaningFeeCents,
+                      createdAt = saved.createdAt.toString
+                    ).asRight[ServiceError]
+                  )
+              }
+          }
+      }
 
   def deleteProperty(
       propertyId: UUID,
@@ -448,9 +488,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
       case Right((from, to, stayDays, accommodationType)) =>
         repo.searchAvailable(from, to, bedrooms, sleeps, stayDays, accommodationType, pricedOnly).flatMap { matches =>
           matches.traverse { item =>
-            repo.listingsForProperty(item.propertyId).map { listings =>
-              val primaryListing = listings.find(_.platform == "airbnb").orElse(listings.headOption)
-              val cleaningFee = primaryListing.flatMap(_.cleaningFeeCents)
+            (repo.listingsForProperty(item.propertyId), repo.propertyCleaningFee(item.propertyId)).mapN { (listings, cleaningFee) =>
               val price = item.nightlyTotalCents.map { nightlySubtotal =>
                 PriceEstimate(
                   currency = "EUR",
@@ -612,7 +650,8 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
                             lastSuccessAt = None,
                             lastError = None,
                             createdAt = current,
-                            updatedAt = current
+                            updatedAt = current,
+                            enabled = true
                           )
                         )
                         synced <- syncCalendarRecord(saved)
@@ -635,7 +674,33 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
           case Right(_) =>
             repo.externalCalendar(calendarId).flatMap {
               case None => fail[ExternalCalendarView](NotFound("external calendar not found"))
+              case Some(calendar) if !calendar.enabled =>
+                fail[ExternalCalendarView](Conflict("external calendar is disabled"))
               case Some(calendar) => syncCalendarRecord(calendar).map(_.asRight[ServiceError])
+            }
+        }
+    }
+
+  def updateExternalCalendar(
+      calendarId: UUID,
+      editToken: String,
+      req: UpdateExternalCalendarRequest
+  ): F[Either[ServiceError, ExternalCalendarView]] =
+    repo.externalCalendarOwnerProfileId(calendarId).flatMap {
+      case None => fail[ExternalCalendarView](NotFound("external calendar not found"))
+      case Some(profileId) =>
+        authorize(profileId, editToken).flatMap {
+          case Left(error) => fail[ExternalCalendarView](error)
+          case Right(_) =>
+            now.flatMap { current =>
+              repo.setExternalCalendarEnabled(calendarId, req.enabled, current).flatMap {
+                case None => fail[ExternalCalendarView](NotFound("external calendar not found"))
+                case Some(calendar) if req.enabled =>
+                  syncCalendarRecord(calendar).map(_.asRight[ServiceError])
+                case Some(calendar) =>
+                  repo.externalCalendarEvents(calendar.id)
+                    .map(events => externalCalendarView(calendar, events).asRight[ServiceError])
+              }
             }
         }
     }
@@ -755,6 +820,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
                     bedrooms = property.bedrooms,
                     sleeps = property.sleeps,
                     minStayDays = property.minStayDays,
+                    cleaningFeeCents = property.cleaningFeeCents,
                     createdAt = property.createdAt.toString,
                     listings = listings.filter(_.propertyId == property.id).map(toPublicListing),
                     availability = availability.map(toAvailabilityCreated),
