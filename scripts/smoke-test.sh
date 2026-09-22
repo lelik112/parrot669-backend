@@ -78,10 +78,9 @@ verification_token_for() {
   for _ in $(seq 1 50); do
     line=$(grep -F "EMAIL_VERIFICATION_LINK $email " "$LOG_FILE" | tail -n 1 || true)
     if [[ -n "$line" ]]; then
-      local url="${line##* }"
-      local token="${url##*#verify=}"
-      token=$(printf '%s' "$token" | tr -cd 'A-Za-z0-9_-')
-      if [[ -n "$token" && "$token" != "$url" ]]; then
+      local token
+      token=$(printf '%s' "$line" | sed -n 's/.*#verify=\([A-Za-z0-9_-]\{43\}\).*/\1/p')
+      if [[ -n "$token" ]]; then
         printf '%s' "$token"
         return 0
       fi
