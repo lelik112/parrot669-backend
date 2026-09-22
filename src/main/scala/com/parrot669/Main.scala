@@ -3,13 +3,18 @@ package com.parrot669
 import cats.effect.{IO, IOApp, Resource}
 import cats.syntax.all._
 import com.comcast.ip4s.{Host, Port}
-import com.parrot669.config.AppConfig
+import com.parrot669.config.{
+  AppConfig,
+  CloudflareEmailConfig,
+  ResendEmailConfig
+}
 import com.parrot669.db.Database
 import com.parrot669.http.Routes
 import com.parrot669.integration.{
   CloudflareVerificationEmailSender,
   HttpIcalFetcher,
   LoggingVerificationEmailSender,
+  ResendVerificationEmailSender,
   VerificationEmailSender
 }
 import com.parrot669.repo.{AuthRepository, ParrotRepository}
@@ -43,7 +48,12 @@ object Main extends IOApp.Simple {
         icalFetcher = new HttpIcalFetcher[IO](allowLocalhost = config.environment == "test")
         emailSender: VerificationEmailSender[IO] =
           config.email match {
-            case Some(email) =>
+            case Some(email: ResendEmailConfig) =>
+              new ResendVerificationEmailSender[IO](
+                email.apiKey,
+                email.from
+              )
+            case Some(email: CloudflareEmailConfig) =>
               new CloudflareVerificationEmailSender[IO](
                 email.cloudflareAccountId,
                 email.cloudflareApiToken,
