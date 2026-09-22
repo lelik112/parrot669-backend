@@ -52,6 +52,7 @@ final case class AccountRecord(
     id: UUID,
     emailNormalized: String,
     passwordHash: String,
+    emailVerified: Boolean,
     createdAt: OffsetDateTime
 )
 
