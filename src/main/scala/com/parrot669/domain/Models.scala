@@ -8,7 +8,7 @@ final case class ProfileRecord(
     parrotId: String,
     displayName: String,
     contact: String,
-    accessTokenHash: String,
+    accessTokenHash: Option[String],
     createdAt: OffsetDateTime
 )
 

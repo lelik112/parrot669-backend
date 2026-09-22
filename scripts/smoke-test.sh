@@ -11,6 +11,9 @@ set -euo pipefail
 export DATABASE_URL DATABASE_USER DATABASE_PASSWORD PARROT_ADMIN_TOKEN HTTP_PORT APP_ENV
 
 LOG_FILE="${TMPDIR:-/tmp}/parrot669-smoke.log"
+COOKIE_JAR=$(mktemp)
+OTHER_COOKIE_JAR=$(mktemp)
+CLAIM_COOKIE_JAR=$(mktemp)
 ICAL_DIR=$(mktemp -d)
 mkdir -p "$ICAL_DIR/calendar/ical"
 cat >"$ICAL_DIR/calendar/ical/123456789.ics" <<'ICS'
@@ -43,6 +46,7 @@ cleanup() {
   kill "$SERVER_PID" 2>/dev/null || true
   kill "$ICAL_SERVER_PID" 2>/dev/null || true
   rm -rf "$ICAL_DIR"
+  rm -f "$COOKIE_JAR" "$OTHER_COOKIE_JAR" "$CLAIM_COOKIE_JAR"
   pkill -f 'com.parrot669.Main' 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -67,17 +71,112 @@ curl --fail --silent "http://localhost:$HTTP_PORT/health" >/dev/null || {
   exit 1
 }
 
-profile_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/profiles"   -H 'content-type: application/json'   -d '{"displayName":"CI Host","contact":"ci@example.com"}')
+AUTH_TEST_PASSWORD="ci-auth-password-12345"
 
-profile_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$profile_json")
-parrot_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["profile"]["parrotId"])' <<<"$profile_json")
-edit_token=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["editToken"])' <<<"$profile_json")
+register_json=$(curl --fail --silent -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+  -X POST "http://localhost:$HTTP_PORT/api/auth/register" \
+  -H 'content-type: application/json' \
+  -d "{\"email\":\"ci@example.com\",\"password\":\"$AUTH_TEST_PASSWORD\",\"displayName\":\"CI Host\"}")
 
-property_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/profiles/$profile_id/properties"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"title":"CI Apartment","city":"Barcelona","accommodationType":"entire_place","bedrooms":2,"sleeps":5}')
+profile_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["profile"]["id"])' <<<"$register_json")
+parrot_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["profile"]["parrotId"])' <<<"$register_json")
+
+me_json=$(curl --fail --silent -b "$COOKIE_JAR" "http://localhost:$HTTP_PORT/api/auth/me")
+ME_JSON="$me_json" python3 - "$profile_id" <<'PY'
+import json, os, sys
+data = json.loads(os.environ["ME_JSON"])
+assert data["email"] == "ci@example.com", data
+assert data["profile"]["id"] == sys.argv[1], data
+print("Register and /me passed")
+PY
+
+unauthenticated_dashboard_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  "http://localhost:$HTTP_PORT/api/dashboard")
+test "$unauthenticated_dashboard_status" = "401"
+
+curl --fail --silent -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
+  -X POST "http://localhost:$HTTP_PORT/api/auth/logout" --output /dev/null
+
+logged_out_me_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  -b "$COOKIE_JAR" "http://localhost:$HTTP_PORT/api/auth/me")
+test "$logged_out_me_status" = "401"
+
+wrong_password_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  -X POST "http://localhost:$HTTP_PORT/api/auth/login" \
+  -H 'content-type: application/json' \
+  -d '{"email":"ci@example.com","password":"wrong-password-value"}')
+test "$wrong_password_status" = "401"
+
+login_json=$(curl --fail --silent -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+  -X POST "http://localhost:$HTTP_PORT/api/auth/login" \
+  -H 'content-type: application/json' \
+  -d "{\"email\":\"CI@EXAMPLE.COM\",\"password\":\"$AUTH_TEST_PASSWORD\"}")
+
+LOGIN_JSON="$login_json" python3 - "$profile_id" <<'PY'
+import json, os, sys
+data = json.loads(os.environ["LOGIN_JSON"])
+assert data["profile"]["id"] == sys.argv[1], data
+print("Login passed")
+PY
+
+legacy_profile_id="11111111-1111-4111-8111-111111111111"
+legacy_edit_token="legacy-ci-edit-token"
+legacy_token_hash=$(python3 -c 'import hashlib; print(hashlib.sha256(b"legacy-ci-edit-token").hexdigest())')
+PGPASSWORD="$DATABASE_PASSWORD" psql "${DATABASE_URL#jdbc:}" -U "$DATABASE_USER" -v ON_ERROR_STOP=1 >/dev/null <<SQL
+insert into profiles (id, parrot_id, display_name, contact, access_token_hash, account_id, created_at)
+values ('$legacy_profile_id', 'PAR-LEGACYCI', 'Legacy CI Host', 'legacy@example.com', '$legacy_token_hash', null, now());
+SQL
+
+curl --fail --silent -c "$CLAIM_COOKIE_JAR" -b "$CLAIM_COOKIE_JAR" \
+  -X POST "http://localhost:$HTTP_PORT/api/auth/register" \
+  -H 'content-type: application/json' \
+  -d '{"email":"claim@example.com","password":"claim-ci-password-12345","displayName":"Temporary Claim Host"}' >/dev/null
+
+claim_json=$(curl --fail --silent -b "$CLAIM_COOKIE_JAR" \
+  -X POST "http://localhost:$HTTP_PORT/api/auth/claim-legacy" \
+  -H 'content-type: application/json' \
+  -d "{\"profileId\":\"$legacy_profile_id\",\"editToken\":\"$legacy_edit_token\"}")
+
+CLAIM_JSON="$claim_json" python3 - "$legacy_profile_id" <<'PY'
+import json, os, sys
+data = json.loads(os.environ["CLAIM_JSON"])
+assert data["profile"]["id"] == sys.argv[1], data
+assert data["profile"]["displayName"] == "Legacy CI Host", data
+print("Legacy profile claim passed")
+PY
+
+legacy_reclaim_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  -b "$CLAIM_COOKIE_JAR" \
+  -X POST "http://localhost:$HTTP_PORT/api/auth/claim-legacy" \
+  -H 'content-type: application/json' \
+  -d "{\"profileId\":\"$legacy_profile_id\",\"editToken\":\"$legacy_edit_token\"}")
+test "$legacy_reclaim_status" = "401"
+
+legacy_header_bypass_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  -H "X-Parrot-Token: $legacy_edit_token" \
+  "http://localhost:$HTTP_PORT/api/profiles/$legacy_profile_id/dashboard")
+test "$legacy_header_bypass_status" = "401"
+
+property_json=$(curl --fail --silent -b "$COOKIE_JAR" \
+  -X POST "http://localhost:$HTTP_PORT/api/properties" \
+  -H 'content-type: application/json' \
+  -d '{"title":"CI Apartment","city":"Barcelona","accommodationType":"entire_place","bedrooms":2,"sleeps":5}')
 
 property_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$property_json")
 
-property_settings_json=$(curl --fail --silent -X PUT "http://localhost:$HTTP_PORT/api/properties/$property_id"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"accommodationType":"private_room","minStayDays":7,"cleaningFeeCents":5500}')
+curl --fail --silent -c "$OTHER_COOKIE_JAR" -b "$OTHER_COOKIE_JAR" \
+  -X POST "http://localhost:$HTTP_PORT/api/auth/register" \
+  -H 'content-type: application/json' \
+  -d '{"email":"other@example.com","password":"other-ci-password-12345","displayName":"Other Host"}' >/dev/null
+
+other_owner_update_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  -b "$OTHER_COOKIE_JAR" \
+  -X PUT "http://localhost:$HTTP_PORT/api/properties/$property_id" \
+  -H 'content-type: application/json' \
+  -d '{"accommodationType":"entire_place","minStayDays":2,"cleaningFeeCents":null}')
+test "$other_owner_update_status" = "404"
+
+property_settings_json=$(curl --fail --silent -X PUT "http://localhost:$HTTP_PORT/api/properties/$property_id"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"accommodationType":"private_room","minStayDays":7,"cleaningFeeCents":5500}')
 
 PROPERTY_SETTINGS_JSON="$property_settings_json" python3 - <<'PY'
 import json, os
@@ -88,7 +187,7 @@ assert data["cleaningFeeCents"] == 5500, data
 print("Property settings update passed")
 PY
 
-property_settings_reset_json=$(curl --fail --silent -X PUT "http://localhost:$HTTP_PORT/api/properties/$property_id"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"accommodationType":"entire_place","minStayDays":7,"cleaningFeeCents":5500}')
+property_settings_reset_json=$(curl --fail --silent -X PUT "http://localhost:$HTTP_PORT/api/properties/$property_id"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"accommodationType":"entire_place","minStayDays":7,"cleaningFeeCents":5500}')
 
 PROPERTY_SETTINGS_RESET_JSON="$property_settings_reset_json" python3 - <<'PY'
 import json, os
@@ -97,17 +196,17 @@ assert data["accommodationType"] == "entire_place", data
 print("Accommodation type edit passed")
 PY
 
-listing_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/properties/$property_id/listings"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"platform":"airbnb","externalId":"123456789"}')
+listing_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/properties/$property_id/listings"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"platform":"airbnb","externalId":"123456789"}')
 
 listing_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$listing_json")
 
-availability_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/properties/$property_id/availability"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"from":"2027-01-01","to":"2027-02-28","nightlyPriceCents":10000}')
+availability_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/properties/$property_id/availability"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"from":"2027-01-01","to":"2027-02-28","nightlyPriceCents":10000}')
 
 availability_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$availability_json")
 
-availability_list_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/properties/$property_id/availability"   -H "X-Parrot-Token: $edit_token")
+availability_list_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/properties/$property_id/availability"   -b "$COOKIE_JAR")
 
-dashboard_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/profiles/$profile_id/dashboard"   -H "X-Parrot-Token: $edit_token")
+dashboard_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/profiles/$profile_id/dashboard"   -b "$COOKIE_JAR")
 
 DASHBOARD_JSON="$dashboard_json" python3 - "$property_id" "$listing_id" "$availability_id" <<'PY'
 import json, os, sys
@@ -148,7 +247,7 @@ wrong_update_status=$(curl --silent --output /dev/null --write-out '%{http_code}
 
 test "$wrong_update_status" = "401"
 
-updated_availability_json=$(curl --fail --silent   -X PUT "http://localhost:$HTTP_PORT/api/availability/$availability_id"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"from":"2027-01-05","to":"2027-03-05","nightlyPriceCents":10000}')
+updated_availability_json=$(curl --fail --silent   -X PUT "http://localhost:$HTTP_PORT/api/availability/$availability_id"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"from":"2027-01-05","to":"2027-03-05","nightlyPriceCents":10000}')
 
 UPDATED_AVAILABILITY_JSON="$updated_availability_json" python3 - "$availability_id" <<'PY'
 import json
@@ -164,7 +263,7 @@ assert data["nightlyPriceCents"] == 10000, data
 print("Availability update passed")
 PY
 
-hidden_listing_json=$(curl --fail --silent -X PUT "http://localhost:$HTTP_PORT/api/listings/$listing_id"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"showInSearch":false}')
+hidden_listing_json=$(curl --fail --silent -X PUT "http://localhost:$HTTP_PORT/api/listings/$listing_id"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"showInSearch":false}')
 
 hidden_link_search_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
 
@@ -178,7 +277,7 @@ assert search[0]["links"] == [], search
 print("External listing search visibility passed")
 PY
 
-curl --fail --silent -X PUT "http://localhost:$HTTP_PORT/api/listings/$listing_id"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"showInSearch":true}' >/dev/null
+curl --fail --silent -X PUT "http://localhost:$HTTP_PORT/api/listings/$listing_id"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"showInSearch":true}' >/dev/null
 
 search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
 
@@ -262,11 +361,11 @@ assert private_room == [], private_room
 print("Updated availability search passed")
 PY
 
-wrong_calendar_listing_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   -X POST "http://localhost:$HTTP_PORT/api/properties/$property_id/calendars"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"provider":"airbnb","icalUrl":"http://127.0.0.1:18080/calendar/ical/23456789.ics?t=ci-secret"}')
+wrong_calendar_listing_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   -X POST "http://localhost:$HTTP_PORT/api/properties/$property_id/calendars"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"provider":"airbnb","icalUrl":"http://127.0.0.1:18080/calendar/ical/23456789.ics?t=ci-secret"}')
 
 test "$wrong_calendar_listing_status" = "400"
 
-localized_calendar_mismatch_json=$(curl --silent -X POST "http://localhost:$HTTP_PORT/api/properties/$property_id/calendars"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"provider":"airbnb","icalUrl":"https://www.airbnb.ru/calendar/ical/23456789.ics?t=ci-secret"}')
+localized_calendar_mismatch_json=$(curl --silent -X POST "http://localhost:$HTTP_PORT/api/properties/$property_id/calendars"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"provider":"airbnb","icalUrl":"https://www.airbnb.ru/calendar/ical/23456789.ics?t=ci-secret"}')
 
 LOCALIZED_CALENDAR_MISMATCH_JSON="$localized_calendar_mismatch_json" python3 - <<'PY'
 import json, os
@@ -275,11 +374,11 @@ assert data["error"] == "Airbnb calendar listing id does not match this property
 print("Localized Airbnb calendar URL validation passed")
 PY
 
-lookalike_airbnb_host_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   -X POST "http://localhost:$HTTP_PORT/api/properties/$property_id/calendars"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"provider":"airbnb","icalUrl":"https://airbnb.com.evil.invalid/calendar/ical/123456789.ics?t=ci-secret"}')
+lookalike_airbnb_host_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   -X POST "http://localhost:$HTTP_PORT/api/properties/$property_id/calendars"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"provider":"airbnb","icalUrl":"https://airbnb.com.evil.invalid/calendar/ical/123456789.ics?t=ci-secret"}')
 
 test "$lookalike_airbnb_host_status" = "400"
 
-calendar_json=$(curl --fail --silent -X POST   "http://localhost:$HTTP_PORT/api/properties/$property_id/calendars"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"provider":"airbnb","icalUrl":"http://127.0.0.1:18080/calendar/ical/123456789.ics?t=ci-secret"}')
+calendar_json=$(curl --fail --silent -X POST   "http://localhost:$HTTP_PORT/api/properties/$property_id/calendars"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"provider":"airbnb","icalUrl":"http://127.0.0.1:18080/calendar/ical/123456789.ics?t=ci-secret"}')
 
 calendar_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$calendar_json")
 
@@ -310,7 +409,7 @@ assert len(platform_unavailable) == 1, platform_unavailable
 print("Airbnb reservation blocking semantics passed")
 PY
 
-disabled_calendar_json=$(curl --fail --silent -X PUT   "http://localhost:$HTTP_PORT/api/calendars/$calendar_id"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"enabled":false}')
+disabled_calendar_json=$(curl --fail --silent -X PUT   "http://localhost:$HTTP_PORT/api/calendars/$calendar_id"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"enabled":false}')
 
 disabled_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
 
@@ -323,7 +422,7 @@ assert len(search) == 1, search
 print("Disabled calendar no longer blocks search")
 PY
 
-enabled_calendar_json=$(curl --fail --silent -X PUT   "http://localhost:$HTTP_PORT/api/calendars/$calendar_id"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"enabled":true}')
+enabled_calendar_json=$(curl --fail --silent -X PUT   "http://localhost:$HTTP_PORT/api/calendars/$calendar_id"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"enabled":true}')
 
 enabled_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
 
@@ -336,7 +435,7 @@ assert search == [], search
 print("Re-enabled calendar blocks search again")
 PY
 
-calendar_dashboard_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/profiles/$profile_id/dashboard"   -H "X-Parrot-Token: $edit_token")
+calendar_dashboard_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/profiles/$profile_id/dashboard"   -b "$COOKIE_JAR")
 
 CALENDAR_DASHBOARD_JSON="$calendar_dashboard_json" python3 - "$calendar_id" <<'PY'
 import json, os, sys
@@ -353,7 +452,7 @@ PY
 kill "$ICAL_SERVER_PID"
 wait "$ICAL_SERVER_PID" 2>/dev/null || true
 
-failed_reconnect_json=$(curl --fail --silent -X POST   "http://localhost:$HTTP_PORT/api/properties/$property_id/calendars"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"provider":"airbnb","icalUrl":"http://127.0.0.1:18080/calendar/ical/123456789.ics?t=ci-secret"}')
+failed_reconnect_json=$(curl --fail --silent -X POST   "http://localhost:$HTTP_PORT/api/properties/$property_id/calendars"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"provider":"airbnb","icalUrl":"http://127.0.0.1:18080/calendar/ical/123456789.ics?t=ci-secret"}')
 
 FAILED_RECONNECT_JSON="$failed_reconnect_json" python3 - "$calendar_id" <<'PY'
 import json, os, sys
@@ -381,9 +480,9 @@ wrong_delete_status=$(curl --silent --output /dev/null --write-out '%{http_code}
 
 test "$wrong_delete_status" = "401"
 
-curl --fail --silent   -X DELETE "http://localhost:$HTTP_PORT/api/availability/$availability_id"   -H "X-Parrot-Token: $edit_token"   --output /dev/null
+curl --fail --silent   -X DELETE "http://localhost:$HTTP_PORT/api/availability/$availability_id"   -b "$COOKIE_JAR"   --output /dev/null
 
-after_delete_list_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/properties/$property_id/availability"   -H "X-Parrot-Token: $edit_token")
+after_delete_list_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/properties/$property_id/availability"   -b "$COOKIE_JAR")
 
 after_delete_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
 
@@ -398,11 +497,11 @@ assert search == [], search
 print("Availability deletion passed")
 PY
 
-period_a_json=$(curl --fail --silent -X POST   "http://localhost:$HTTP_PORT/api/properties/$property_id/availability"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"from":"2027-04-01","to":"2027-04-05","nightlyPriceCents":11000}')
+period_a_json=$(curl --fail --silent -X POST   "http://localhost:$HTTP_PORT/api/properties/$property_id/availability"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"from":"2027-04-01","to":"2027-04-05","nightlyPriceCents":11000}')
 
 period_a_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$period_a_json")
 
-period_b_json=$(curl --fail --silent -X POST   "http://localhost:$HTTP_PORT/api/properties/$property_id/availability"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"from":"2027-04-05","to":"2027-04-10","nightlyPriceCents":12000}')
+period_b_json=$(curl --fail --silent -X POST   "http://localhost:$HTTP_PORT/api/properties/$property_id/availability"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"from":"2027-04-05","to":"2027-04-10","nightlyPriceCents":12000}')
 
 period_b_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$period_b_json")
 
@@ -419,11 +518,11 @@ assert price["estimatedAmountCents"] == 86500, price
 print("Adjacent availability search passed")
 PY
 
-overlap_status=$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST   "http://localhost:$HTTP_PORT/api/properties/$property_id/availability"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"from":"2027-04-04","to":"2027-04-06","nightlyPriceCents":9999}')
+overlap_status=$(curl --silent --output /dev/null --write-out '%{http_code}' -X POST   "http://localhost:$HTTP_PORT/api/properties/$property_id/availability"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"from":"2027-04-04","to":"2027-04-06","nightlyPriceCents":9999}')
 
 test "$overlap_status" = "409"
 
-curl --fail --silent -X PUT   "http://localhost:$HTTP_PORT/api/availability/$period_b_id"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"from":"2027-04-05","to":"2027-04-10","nightlyPriceCents":null}'   >/dev/null
+curl --fail --silent -X PUT   "http://localhost:$HTTP_PORT/api/availability/$period_b_id"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"from":"2027-04-05","to":"2027-04-10","nightlyPriceCents":null}'   >/dev/null
 
 all_prices_missing_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-04-02&to=2027-04-09&bedrooms=2&sleeps=4")
 
@@ -439,11 +538,11 @@ assert priced == [], priced
 print("Incomplete price behavior passed")
 PY
 
-sort_property_json=$(curl --fail --silent -X POST "http://localhost:$HTTP_PORT/api/profiles/$profile_id/properties"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"title":"Budget Apartment","city":"Barcelona","accommodationType":"entire_place","bedrooms":2,"sleeps":4}')
+sort_property_json=$(curl --fail --silent -X POST "http://localhost:$HTTP_PORT/api/profiles/$profile_id/properties"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"title":"Budget Apartment","city":"Barcelona","accommodationType":"entire_place","bedrooms":2,"sleeps":4}')
 
 sort_property_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$sort_property_json")
 
-curl --fail --silent -X POST "http://localhost:$HTTP_PORT/api/properties/$sort_property_id/availability"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"from":"2027-04-02","to":"2027-04-09","nightlyPriceCents":9000}' >/dev/null
+curl --fail --silent -X POST "http://localhost:$HTTP_PORT/api/properties/$sort_property_id/availability"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"from":"2027-04-02","to":"2027-04-09","nightlyPriceCents":9000}' >/dev/null
 
 sorted_price_search_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-04-02&to=2027-04-09&bedrooms=2&sleeps=4")
 price_range_search_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-04-02&to=2027-04-09&bedrooms=2&sleeps=4&minPriceCents=62000&maxPriceCents=64000")
@@ -468,9 +567,9 @@ assert empty == [], empty
 print("Price sorting and range filters passed")
 PY
 
-curl --fail --silent -X DELETE "http://localhost:$HTTP_PORT/api/properties/$sort_property_id"   -H "X-Parrot-Token: $edit_token"   --output /dev/null
+curl --fail --silent -X DELETE "http://localhost:$HTTP_PORT/api/properties/$sort_property_id"   -b "$COOKIE_JAR"   --output /dev/null
 
-challenge_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/listings/$listing_id/challenges"   -H "X-Parrot-Token: $edit_token")
+challenge_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/listings/$listing_id/challenges"   -b "$COOKIE_JAR")
 
 challenge_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$challenge_json")
 
@@ -515,7 +614,7 @@ assert data["method"] == "calendar_challenge", data
 print("Verification response passed")
 PY
 
-updated_property_json=$(curl --fail --silent -X PUT   "http://localhost:$HTTP_PORT/api/properties/$property_id"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"accommodationType":"entire_place","minStayDays":7,"cleaningFeeCents":6500}')
+updated_property_json=$(curl --fail --silent -X PUT   "http://localhost:$HTTP_PORT/api/properties/$property_id"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"accommodationType":"entire_place","minStayDays":7,"cleaningFeeCents":6500}')
 
 UPDATED_PROPERTY_JSON="$updated_property_json" python3 - <<'PY'
 import json, os
@@ -528,11 +627,11 @@ wrong_listing_delete_status=$(curl --silent --output /dev/null --write-out '%{ht
 
 test "$wrong_listing_delete_status" = "401"
 
-curl --fail --silent   -X DELETE "http://localhost:$HTTP_PORT/api/listings/$listing_id"   -H "X-Parrot-Token: $edit_token"   --output /dev/null
+curl --fail --silent   -X DELETE "http://localhost:$HTTP_PORT/api/listings/$listing_id"   -b "$COOKIE_JAR"   --output /dev/null
 
 after_listing_delete_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/p/$parrot_id")
 after_listing_delete_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-04-02&to=2027-04-09&bedrooms=2&sleeps=4")
-after_listing_delete_dashboard_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/profiles/$profile_id/dashboard"   -H "X-Parrot-Token: $edit_token")
+after_listing_delete_dashboard_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/profiles/$profile_id/dashboard"   -b "$COOKIE_JAR")
 
 AFTER_LISTING_DELETE_JSON="$after_listing_delete_json" AFTER_LISTING_DELETE_SEARCH_JSON="$after_listing_delete_search_json" AFTER_LISTING_DELETE_DASHBOARD_JSON="$after_listing_delete_dashboard_json" python3 - "$property_id" <<'PY'
 import json, os
@@ -552,7 +651,7 @@ wrong_property_delete_status=$(curl --silent --output /dev/null --write-out '%{h
 
 test "$wrong_property_delete_status" = "401"
 
-curl --fail --silent   -X DELETE "http://localhost:$HTTP_PORT/api/properties/$property_id"   -H "X-Parrot-Token: $edit_token"   --output /dev/null
+curl --fail --silent   -X DELETE "http://localhost:$HTTP_PORT/api/properties/$property_id"   -b "$COOKIE_JAR"   --output /dev/null
 
 after_property_delete_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/p/$parrot_id")
 AFTER_PROPERTY_DELETE_JSON="$after_property_delete_json" python3 - <<'PY'

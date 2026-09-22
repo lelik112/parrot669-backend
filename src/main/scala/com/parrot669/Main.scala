@@ -7,8 +7,8 @@ import com.parrot669.config.AppConfig
 import com.parrot669.db.Database
 import com.parrot669.http.Routes
 import com.parrot669.integration.HttpIcalFetcher
-import com.parrot669.repo.ParrotRepository
-import com.parrot669.service.ParrotService
+import com.parrot669.repo.{AuthRepository, ParrotRepository}
+import com.parrot669.service.{AuthService, ParrotService}
 import org.http4s.ember.server.EmberServerBuilder
 import org.slf4j.LoggerFactory
 
@@ -34,9 +34,16 @@ object Main extends IOApp.Simple {
           new IllegalArgumentException(s"invalid HTTP_PORT: ${config.httpPort}")
         ))
         repo = new ParrotRepository[IO](xa)
+        authRepo = new AuthRepository[IO](xa)
         icalFetcher = new HttpIcalFetcher[IO](allowLocalhost = config.environment == "test")
         service = new ParrotService[IO](repo, icalFetcher)
-        routes = new Routes[IO](service, config.adminToken).routes
+        authService = new AuthService[IO](authRepo)
+        routes = new Routes[IO](
+          service,
+          authService,
+          config.adminToken,
+          secureCookies = config.environment == "prod"
+        ).routes
         server <- EmberServerBuilder
           .default[IO]
           .withHost(host)

@@ -19,8 +19,9 @@ sealed trait ServiceError {
 object ServiceError {
   final case class Invalid(message: String) extends ServiceError
   final case class NotFound(message: String) extends ServiceError
-  final case class Unauthorized(message: String = "invalid or missing edit token") extends ServiceError
+  final case class Unauthorized(message: String = "authentication required") extends ServiceError
   final case class Conflict(message: String) extends ServiceError
+  final case class RateLimited(message: String) extends ServiceError
 }
 
 final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: IcalFetcher[F]) {
@@ -140,15 +141,11 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
   private def airbnbUrl(externalId: String): String =
     s"https://www.airbnb.com/rooms/$externalId"
 
-  private def authorize(profileId: UUID, editToken: String): F[Either[ServiceError, Unit]] =
-    if (normalized(editToken).isEmpty) fail[Unit](Unauthorized())
+  private def authorize(profileId: UUID, currentProfileId: UUID): F[Either[ServiceError, Unit]] =
+    if (profileId == currentProfileId)
+      Async[F].pure(Right[ServiceError, Unit](()))
     else
-      repo.findProfile(profileId).map {
-        case None => Left[ServiceError, Unit](NotFound("profile not found"))
-        case Some(profile) if tokenMatches(editToken, profile.accessTokenHash) =>
-          Right[ServiceError, Unit](())
-        case Some(_) => Left[ServiceError, Unit](Unauthorized())
-      }
+      fail[Unit](NotFound("resource not found"))
 
   private def toPublicListing(listing: ListingRecord): PublicListing =
     PublicListing(
@@ -249,7 +246,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
             parrotId = parrotId,
             displayName = normalized(req.displayName),
             contact = normalized(req.contact),
-            accessTokenHash = tokenHash(rawToken),
+            accessTokenHash = Some(tokenHash(rawToken)),
             createdAt = createdAt
           )
           saved <- repo.createProfile(record)
@@ -266,13 +263,13 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
 
   def createProperty(
       profileId: UUID,
-      editToken: String,
+      currentProfileId: UUID,
       req: CreatePropertyRequest
   ): F[Either[ServiceError, PropertyCreated]] =
     validateProperty(req) match {
       case Left(error) => fail[PropertyCreated](error)
       case Right(_) =>
-        authorize(profileId, editToken).flatMap {
+        authorize(profileId, currentProfileId).flatMap {
           case Left(error) => fail[PropertyCreated](error)
           case Right(_) =>
             for {
@@ -308,7 +305,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
 
   def updateProperty(
       propertyId: UUID,
-      editToken: String,
+      currentProfileId: UUID,
       req: UpdatePropertyRequest
   ): F[Either[ServiceError, PropertyCreated]] = {
     val accommodationType = normalized(req.accommodationType).toLowerCase
@@ -322,7 +319,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
       repo.propertyOwnerProfileId(propertyId).flatMap {
         case None => fail[PropertyCreated](NotFound("property not found"))
         case Some(profileId) =>
-          authorize(profileId, editToken).flatMap {
+          authorize(profileId, currentProfileId).flatMap {
             case Left(error) => fail[PropertyCreated](error)
             case Right(_) =>
               repo.updatePropertySettings(propertyId, accommodationType, req.minStayDays, req.cleaningFeeCents).flatMap {
@@ -348,12 +345,12 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
 
   def deleteProperty(
       propertyId: UUID,
-      editToken: String
+      currentProfileId: UUID
   ): F[Either[ServiceError, Unit]] =
     repo.propertyOwnerProfileId(propertyId).flatMap {
       case None => fail[Unit](NotFound("property not found"))
       case Some(profileId) =>
-        authorize(profileId, editToken).flatMap {
+        authorize(profileId, currentProfileId).flatMap {
           case Left(error) => fail[Unit](error)
           case Right(_) =>
             repo.deleteProperty(propertyId).flatMap {
@@ -365,7 +362,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
 
   def addAvailability(
       propertyId: UUID,
-      editToken: String,
+      currentProfileId: UUID,
       req: AddAvailabilityRequest
   ): F[Either[ServiceError, AvailabilityCreated]] =
     validateAvailability(req) match {
@@ -374,7 +371,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
         repo.propertyOwnerProfileId(propertyId).flatMap {
           case None => fail[AvailabilityCreated](NotFound("property not found"))
           case Some(profileId) =>
-            authorize(profileId, editToken).flatMap {
+            authorize(profileId, currentProfileId).flatMap {
               case Left(error) => fail[AvailabilityCreated](error)
               case Right(_) =>
                 repo.hasOverlappingAvailability(propertyId, dateFrom, dateTo).flatMap {
@@ -411,12 +408,12 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
 
   def listAvailability(
       propertyId: UUID,
-      editToken: String
+      currentProfileId: UUID
   ): F[Either[ServiceError, List[AvailabilityCreated]]] =
     repo.propertyOwnerProfileId(propertyId).flatMap {
       case None => fail[List[AvailabilityCreated]](NotFound("property not found"))
       case Some(profileId) =>
-        authorize(profileId, editToken).flatMap {
+        authorize(profileId, currentProfileId).flatMap {
           case Left(error) => fail[List[AvailabilityCreated]](error)
           case Right(_) =>
             repo.availabilityForProperty(propertyId)
@@ -426,7 +423,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
 
   def updateAvailability(
       availabilityId: UUID,
-      editToken: String,
+      currentProfileId: UUID,
       req: AddAvailabilityRequest
   ): F[Either[ServiceError, AvailabilityCreated]] =
     validateAvailability(req) match {
@@ -435,7 +432,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
         repo.availabilityOwnerProfileId(availabilityId).flatMap {
           case None => fail[AvailabilityCreated](NotFound("availability period not found"))
           case Some(profileId) =>
-            authorize(profileId, editToken).flatMap {
+            authorize(profileId, currentProfileId).flatMap {
               case Left(error) => fail[AvailabilityCreated](error)
               case Right(_) =>
                 repo.hasOverlappingAvailabilityForUpdate(availabilityId, dateFrom, dateTo).flatMap {
@@ -452,12 +449,12 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
 
   def deleteAvailability(
       availabilityId: UUID,
-      editToken: String
+      currentProfileId: UUID
   ): F[Either[ServiceError, Unit]] =
     repo.availabilityOwnerProfileId(availabilityId).flatMap {
       case None => fail[Unit](NotFound("availability period not found"))
       case Some(profileId) =>
-        authorize(profileId, editToken).flatMap {
+        authorize(profileId, currentProfileId).flatMap {
           case Left(error) => fail[Unit](error)
           case Right(_) =>
             repo.deleteAvailability(availabilityId).flatMap {
@@ -559,7 +556,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
 
   def addListing(
       propertyId: UUID,
-      editToken: String,
+      currentProfileId: UUID,
       req: AddListingRequest
   ): F[Either[ServiceError, ListingCreated]] =
     validateListing(req) match {
@@ -568,7 +565,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
         repo.propertyOwnerProfileId(propertyId).flatMap {
           case None => fail[ListingCreated](NotFound("property not found"))
           case Some(profileId) =>
-            authorize(profileId, editToken).flatMap {
+            authorize(profileId, currentProfileId).flatMap {
               case Left(error) => fail[ListingCreated](error)
               case Right(_) =>
                 for {
@@ -602,13 +599,13 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
 
   def updateListing(
       listingId: UUID,
-      editToken: String,
+      currentProfileId: UUID,
       req: UpdateListingRequest
   ): F[Either[ServiceError, ListingCreated]] =
     repo.listingOwnerProfileId(listingId).flatMap {
         case None => fail[ListingCreated](NotFound("listing not found"))
         case Some(profileId) =>
-          authorize(profileId, editToken).flatMap {
+          authorize(profileId, currentProfileId).flatMap {
             case Left(error) => fail[ListingCreated](error)
             case Right(_) =>
               repo.updateListingSearchVisibility(listingId, req.showInSearch).flatMap {
@@ -632,12 +629,12 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
 
   def deleteListing(
       listingId: UUID,
-      editToken: String
+      currentProfileId: UUID
   ): F[Either[ServiceError, Unit]] =
     repo.listingOwnerProfileId(listingId).flatMap {
       case None => fail[Unit](NotFound("listing not found"))
       case Some(profileId) =>
-        authorize(profileId, editToken).flatMap {
+        authorize(profileId, currentProfileId).flatMap {
           case Left(error) => fail[Unit](error)
           case Right(_) =>
             repo.deleteListing(listingId).flatMap {
@@ -649,7 +646,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
 
   def connectExternalCalendar(
       propertyId: UUID,
-      editToken: String,
+      currentProfileId: UUID,
       req: ConnectExternalCalendarRequest
   ): F[Either[ServiceError, ExternalCalendarView]] = {
     val provider = normalized(req.provider).toLowerCase
@@ -663,7 +660,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
           repo.propertyOwnerProfileId(propertyId).flatMap {
             case None => fail[ExternalCalendarView](NotFound("property not found"))
             case Some(profileId) =>
-              authorize(profileId, editToken).flatMap {
+              authorize(profileId, currentProfileId).flatMap {
                 case Left(error) => fail[ExternalCalendarView](error)
                 case Right(_) =>
                   repo.listingsForProperty(propertyId).flatMap { listings =>
@@ -702,12 +699,12 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
 
   def syncExternalCalendar(
       calendarId: UUID,
-      editToken: String
+      currentProfileId: UUID
   ): F[Either[ServiceError, ExternalCalendarView]] =
     repo.externalCalendarOwnerProfileId(calendarId).flatMap {
       case None => fail[ExternalCalendarView](NotFound("external calendar not found"))
       case Some(profileId) =>
-        authorize(profileId, editToken).flatMap {
+        authorize(profileId, currentProfileId).flatMap {
           case Left(error) => fail[ExternalCalendarView](error)
           case Right(_) =>
             repo.externalCalendar(calendarId).flatMap {
@@ -721,13 +718,13 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
 
   def updateExternalCalendar(
       calendarId: UUID,
-      editToken: String,
+      currentProfileId: UUID,
       req: UpdateExternalCalendarRequest
   ): F[Either[ServiceError, ExternalCalendarView]] =
     repo.externalCalendarOwnerProfileId(calendarId).flatMap {
       case None => fail[ExternalCalendarView](NotFound("external calendar not found"))
       case Some(profileId) =>
-        authorize(profileId, editToken).flatMap {
+        authorize(profileId, currentProfileId).flatMap {
           case Left(error) => fail[ExternalCalendarView](error)
           case Right(_) =>
             now.flatMap { current =>
@@ -745,12 +742,12 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
 
   def deleteExternalCalendar(
       calendarId: UUID,
-      editToken: String
+      currentProfileId: UUID
   ): F[Either[ServiceError, Unit]] =
     repo.externalCalendarOwnerProfileId(calendarId).flatMap {
       case None => fail[Unit](NotFound("external calendar not found"))
       case Some(profileId) =>
-        authorize(profileId, editToken).flatMap {
+        authorize(profileId, currentProfileId).flatMap {
           case Left(error) => fail[Unit](error)
           case Right(_) =>
             repo.deleteExternalCalendar(calendarId).flatMap {
@@ -765,12 +762,12 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
 
   def createCalendarChallenge(
       listingId: UUID,
-      editToken: String
+      currentProfileId: UUID
   ): F[Either[ServiceError, ChallengeCreated]] =
     repo.listingOwnerProfileId(listingId).flatMap {
       case None => fail[ChallengeCreated](NotFound("listing not found"))
       case Some(profileId) =>
-        authorize(profileId, editToken).flatMap {
+        authorize(profileId, currentProfileId).flatMap {
           case Left(error) => fail[ChallengeCreated](error)
           case Right(_) =>
             for {
@@ -839,9 +836,9 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
 
   def hostDashboard(
       profileId: UUID,
-      editToken: String
+      currentProfileId: UUID
   ): F[Either[ServiceError, HostDashboard]] =
-    authorize(profileId, editToken).flatMap {
+    authorize(profileId, currentProfileId).flatMap {
       case Left(error) => fail[HostDashboard](error)
       case Right(_) =>
         (repo.findProfile(profileId), repo.propertiesForProfile(profileId), repo.listingsForProfile(profileId)).tupled.flatMap {
