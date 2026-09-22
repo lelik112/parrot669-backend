@@ -281,14 +281,14 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
 
   def createListing(listing: ListingRecord): F[ListingRecord] =
     sql"""
-      insert into external_listings (id, property_id, platform, external_id, url, cleaning_fee_cents, created_at)
-      values (${listing.id}, ${listing.propertyId}, ${listing.platform}, ${listing.externalId}, ${listing.url}, ${listing.cleaningFeeCents}, ${listing.createdAt})
-      returning id, property_id, platform, external_id, url, cleaning_fee_cents, created_at
+      insert into external_listings (id, property_id, platform, external_id, url, cleaning_fee_cents, show_in_search, created_at)
+      values (${listing.id}, ${listing.propertyId}, ${listing.platform}, ${listing.externalId}, ${listing.url}, ${listing.cleaningFeeCents}, ${listing.showInSearch}, ${listing.createdAt})
+      returning id, property_id, platform, external_id, url, cleaning_fee_cents, show_in_search, created_at
     """.query[ListingRecord].unique.transact(xa)
 
   def listingsForProperty(propertyId: UUID): F[List[ListingRecord]] =
     sql"""
-      select id, property_id, platform, external_id, url, cleaning_fee_cents, created_at
+      select id, property_id, platform, external_id, url, cleaning_fee_cents, show_in_search, created_at
       from external_listings
       where property_id = $propertyId
       order by created_at asc
@@ -302,23 +302,34 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
       where l.id = $listingId
     """.query[UUID].option.transact(xa)
 
-  def updateListingCleaningFee(
+  def updateListingSearchVisibility(
       listingId: UUID,
-      cleaningFeeCents: Option[Long]
+      showInSearch: Boolean
   ): F[Option[ListingRecord]] =
     sql"""
       update external_listings
-      set cleaning_fee_cents = $cleaningFeeCents
+      set show_in_search = $showInSearch
       where id = $listingId
-      returning id, property_id, platform, external_id, url, cleaning_fee_cents, created_at
+      returning id, property_id, platform, external_id, url, cleaning_fee_cents, show_in_search, created_at
     """.query[ListingRecord].option.transact(xa)
 
   def deleteListing(listingId: UUID): F[Boolean] =
-    sql"delete from external_listings where id = $listingId"
-      .update
-      .run
-      .map(_ == 1)
-      .transact(xa)
+    sql"""
+      with target as (
+        select property_id, platform
+        from external_listings
+        where id = $listingId
+      ),
+      deleted_calendars as (
+        delete from external_calendars ec
+        using target t
+        where ec.property_id = t.property_id
+          and ec.provider = t.platform
+      )
+      delete from external_listings
+      where id = $listingId
+      returning id
+    """.query[UUID].option.map(_.isDefined).transact(xa)
 
   def upsertExternalCalendar(calendar: ExternalCalendarRecord): F[ExternalCalendarRecord] = {
     val tx = for {
@@ -597,7 +608,7 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
 
   def listingsForProfile(profileId: UUID): F[List[ListingRecord]] =
     sql"""
-      select l.id, l.property_id, l.platform, l.external_id, l.url, l.cleaning_fee_cents, l.created_at
+      select l.id, l.property_id, l.platform, l.external_id, l.url, l.cleaning_fee_cents, l.show_in_search, l.created_at
       from external_listings l
       join properties p on p.id = l.property_id
       where p.profile_id = $profileId

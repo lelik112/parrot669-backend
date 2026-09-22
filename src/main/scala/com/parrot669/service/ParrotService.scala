@@ -157,6 +157,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
       externalId = listing.externalId,
       url = listing.url,
       cleaningFeeCents = listing.cleaningFeeCents,
+      showInSearch = listing.showInSearch,
       createdAt = listing.createdAt.toString
     )
 
@@ -528,7 +529,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
                 availableFrom = item.dateFrom.toString,
                 availableTo = item.dateTo.toString,
                 price = price,
-                links = listings.map(toPublicListing)
+                links = listings.filter(_.showInSearch).map(toPublicListing)
               )
             }
           }.map { results =>
@@ -581,6 +582,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
                       externalId = Some(normalized(req.externalId)),
                       url = airbnbUrl(normalized(req.externalId)),
                       cleaningFeeCents = req.cleaningFeeCents,
+                      showInSearch = true,
                       createdAt = createdAt
                     )
                   )
@@ -591,6 +593,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
                   externalId = saved.externalId,
                   url = saved.url,
                   cleaningFeeCents = saved.cleaningFeeCents,
+                  showInSearch = saved.showInSearch,
                   createdAt = saved.createdAt.toString
                 ).asRight[ServiceError]
             }
@@ -602,16 +605,13 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
       editToken: String,
       req: UpdateListingRequest
   ): F[Either[ServiceError, ListingCreated]] =
-    if (!validCleaningFee(req.cleaningFeeCents))
-      fail[ListingCreated](Invalid("cleaningFeeCents must be between 0 and 10000000 when provided"))
-    else
-      repo.listingOwnerProfileId(listingId).flatMap {
+    repo.listingOwnerProfileId(listingId).flatMap {
         case None => fail[ListingCreated](NotFound("listing not found"))
         case Some(profileId) =>
           authorize(profileId, editToken).flatMap {
             case Left(error) => fail[ListingCreated](error)
             case Right(_) =>
-              repo.updateListingCleaningFee(listingId, req.cleaningFeeCents).flatMap {
+              repo.updateListingSearchVisibility(listingId, req.showInSearch).flatMap {
                 case None => fail[ListingCreated](NotFound("listing not found"))
                 case Some(saved) =>
                   Async[F].pure(
@@ -622,6 +622,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
                       externalId = saved.externalId,
                       url = saved.url,
                       cleaningFeeCents = saved.cleaningFeeCents,
+                      showInSearch = saved.showInSearch,
                       createdAt = saved.createdAt.toString
                     ).asRight[ServiceError]
                   )

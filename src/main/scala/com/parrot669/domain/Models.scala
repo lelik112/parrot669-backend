@@ -32,6 +32,7 @@ final case class ListingRecord(
     externalId: Option[String],
     url: String,
     cleaningFeeCents: Option[Long],
+    showInSearch: Boolean,
     createdAt: OffsetDateTime
 )
 
@@ -121,7 +122,7 @@ final case class UpdatePropertyRequest(
     cleaningFeeCents: Option[Long]
 )
 final case class AddListingRequest(platform: String, externalId: String, cleaningFeeCents: Option[Long])
-final case class UpdateListingRequest(cleaningFeeCents: Option[Long])
+final case class UpdateListingRequest(showInSearch: Boolean)
 final case class AddAvailabilityRequest(from: String, to: String, nightlyPriceCents: Option[Long])
 final case class ConnectExternalCalendarRequest(provider: String, icalUrl: String)
 final case class UpdateExternalCalendarRequest(enabled: Boolean)
@@ -144,6 +145,7 @@ final case class PublicListing(
     externalId: Option[String],
     url: String,
     cleaningFeeCents: Option[Long],
+    showInSearch: Boolean,
     createdAt: String
 )
 
@@ -233,6 +235,7 @@ final case class ListingCreated(
     externalId: Option[String],
     url: String,
     cleaningFeeCents: Option[Long],
+    showInSearch: Boolean,
     createdAt: String
 )
 
