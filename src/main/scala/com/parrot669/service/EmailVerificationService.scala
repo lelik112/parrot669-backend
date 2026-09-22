@@ -1,6 +1,7 @@
 package com.parrot669.service
 
 import cats.effect.Async
+import cats.syntax.all._
 import com.parrot669.domain._
 import com.parrot669.repo.AuthRepository
 
