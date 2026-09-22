@@ -119,6 +119,44 @@ assert data["profile"]["id"] == sys.argv[1], data
 print("Login passed")
 PY
 
+legacy_profile_id="11111111-1111-4111-8111-111111111111"
+legacy_edit_token="legacy-ci-edit-token"
+legacy_token_hash=$(python3 -c 'import hashlib; print(hashlib.sha256(b"legacy-ci-edit-token").hexdigest())')
+PGPASSWORD="$DATABASE_PASSWORD" psql "${DATABASE_URL#jdbc:}" -U "$DATABASE_USER" -v ON_ERROR_STOP=1 >/dev/null <<SQL
+insert into profiles (id, parrot_id, display_name, contact, access_token_hash, account_id, created_at)
+values ('$legacy_profile_id', 'PAR-LEGACYCI', 'Legacy CI Host', 'legacy@example.com', '$legacy_token_hash', null, now());
+SQL
+
+curl --fail --silent -c "$CLAIM_COOKIE_JAR" -b "$CLAIM_COOKIE_JAR" \
+  -X POST "http://localhost:$HTTP_PORT/api/auth/register" \
+  -H 'content-type: application/json' \
+  -d '{"email":"claim@example.com","password":"claim-ci-password-12345","displayName":"Temporary Claim Host"}' >/dev/null
+
+claim_json=$(curl --fail --silent -b "$CLAIM_COOKIE_JAR" \
+  -X POST "http://localhost:$HTTP_PORT/api/auth/claim-legacy" \
+  -H 'content-type: application/json' \
+  -d "{\"profileId\":\"$legacy_profile_id\",\"editToken\":\"$legacy_edit_token\"}")
+
+CLAIM_JSON="$claim_json" python3 - "$legacy_profile_id" <<'PY'
+import json, os, sys
+data = json.loads(os.environ["CLAIM_JSON"])
+assert data["profile"]["id"] == sys.argv[1], data
+assert data["profile"]["displayName"] == "Legacy CI Host", data
+print("Legacy profile claim passed")
+PY
+
+legacy_reclaim_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  -b "$CLAIM_COOKIE_JAR" \
+  -X POST "http://localhost:$HTTP_PORT/api/auth/claim-legacy" \
+  -H 'content-type: application/json' \
+  -d "{\"profileId\":\"$legacy_profile_id\",\"editToken\":\"$legacy_edit_token\"}")
+test "$legacy_reclaim_status" = "401"
+
+legacy_header_bypass_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  -H "X-Parrot-Token: $legacy_edit_token" \
+  "http://localhost:$HTTP_PORT/api/profiles/$legacy_profile_id/dashboard")
+test "$legacy_header_bypass_status" = "401"
+
 property_json=$(curl --fail --silent -b "$COOKIE_JAR" \
   -X POST "http://localhost:$HTTP_PORT/api/properties" \
   -H 'content-type: application/json' \
