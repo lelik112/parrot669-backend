@@ -8,7 +8,7 @@ import com.parrot669.db.Database
 import com.parrot669.http.Routes
 import com.parrot669.integration.HttpIcalFetcher
 import com.parrot669.repo.{AuthRepository, ParrotRepository}
-import com.parrot669.service.{AuthService, EmailSender, EmailVerificationService, ParrotService}
+import com.parrot669.service.{AuthService, EmailSender, EmailVerificationService, ParrotService, ResendEmailSender}
 import org.http4s.ember.server.EmberServerBuilder
 import org.slf4j.LoggerFactory
 
@@ -37,7 +37,12 @@ object Main extends IOApp.Simple {
         authRepo = new AuthRepository[IO](xa)
         icalFetcher = new HttpIcalFetcher[IO](allowLocalhost = config.environment == "test")
         service = new ParrotService[IO](repo, icalFetcher)
-        emailSender = EmailSender.noop[IO]
+        emailSender =
+          if (config.environment == "test") EmailSender.noop[IO]
+          else
+            config.resendApiKey
+              .map(key => new ResendEmailSender[IO](key, config.resendFrom, config.publicBaseUrl): EmailSender[IO])
+              .getOrElse(EmailSender.unconfigured[IO])
         emailVerificationService = new EmailVerificationService[IO](authRepo, emailSender)
         authService = new AuthService[IO](authRepo, emailVerificationService)
         routes = new Routes[IO](
