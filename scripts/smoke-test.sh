@@ -10,6 +10,10 @@ set -euo pipefail
 
 export DATABASE_URL DATABASE_USER DATABASE_PASSWORD PARROT_ADMIN_TOKEN HTTP_PORT APP_ENV
 
+# Run the username/session integration tests against isolated test schemas.
+TEST_DATABASE_URL="$DATABASE_URL" TEST_DATABASE_USER="$DATABASE_USER" \
+  TEST_DATABASE_PASSWORD="$DATABASE_PASSWORD" sbt -batch test
+
 LOG_FILE="${TMPDIR:-/tmp}/parrot669-smoke.log"
 COOKIE_JAR=$(mktemp)
 OTHER_COOKIE_JAR=$(mktemp)
@@ -163,6 +167,18 @@ import json, os, sys
 data = json.loads(os.environ["LOGIN_JSON"])
 assert data["profile"]["id"] == sys.argv[1], data
 print("Login passed")
+PY
+
+username_login_json=$(curl --fail --silent -c "$COOKIE_JAR" \
+  -X POST "http://localhost:$HTTP_PORT/api/auth/login" \
+  -H 'content-type: application/json' \
+  -d "{\"login\":\"  ci HOST  \",\"password\":\"$AUTH_TEST_PASSWORD\"}")
+LOGIN_JSON="$username_login_json" python3 - "$profile_id" <<'PY'
+import json, os, sys
+data = json.loads(os.environ["LOGIN_JSON"])
+assert data["profile"]["id"] == sys.argv[1], data
+assert data["username"] == "CI Host", data
+print("Case-insensitive username login passed")
 PY
 
 legacy_claim_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \

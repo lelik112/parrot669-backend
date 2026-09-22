@@ -6,12 +6,14 @@ import java.util.UUID
 final case class RegisterRequest(
     email: String,
     password: String,
-    displayName: String
+    displayName: String,
+    username: Option[String] = None
 )
 
 final case class LoginRequest(
-    email: String,
-    password: String
+    password: String,
+    login: Option[String] = None,
+    email: Option[String] = None
 )
 
 final case class AuthProfile(
@@ -23,7 +25,8 @@ final case class AuthProfile(
 final case class AuthUser(
     accountId: String,
     email: String,
-    profile: AuthProfile
+    profile: AuthProfile,
+    username: String
 )
 
 final case class AuthResult(
@@ -45,7 +48,8 @@ final case class AuthContext(
     email: String,
     profileId: UUID,
     parrotId: String,
-    displayName: String
+    displayName: String,
+    username: String
 )
 
 final case class AccountRecord(
@@ -53,7 +57,8 @@ final case class AccountRecord(
     emailNormalized: String,
     passwordHash: String,
     emailVerified: Boolean,
-    createdAt: OffsetDateTime
+    createdAt: OffsetDateTime,
+    username: String
 )
 
 final case class SessionRecord(

@@ -38,7 +38,11 @@ Host Profile + ExternalListing
   └─ Verification(claim = controls_listing)
 ```
 
-`Account` is the login identity. It has a normalized unique email and an Argon2id password hash. A Host Profile is the domain identity shown to guests and owns properties. For the current MVP, one account owns one Host Profile.
+`Account` is the login identity. It has a normalized unique email, a unique username, and an Argon2id password hash. Usernames are compared without case or surrounding spaces, allow 1–120 characters, and cannot contain `@` or control characters. A Host Profile is the domain identity shown to guests and owns properties. Display names remain non-unique. For the current MVP, one account owns one Host Profile.
+
+Migration V16 copies each existing profile's display name into its account's username without renaming it. It checks for missing/invalid names and case-insensitive duplicates before writing; a conflict aborts the entire migration transaction. Existing sessions and passwords remain valid.
+
+`POST /api/auth/login` accepts `{"login":"email or username","password":"..."}`. The old `email` request field remains supported. Both identifiers share the same account-level failed-password limit. Responses from login, verification, and `/api/auth/me` include `username`.
 
 A profile still gets a human-readable ID like:
 
@@ -106,12 +110,30 @@ curl -s -c cookies.txt http://localhost:8080/api/auth/register \
   -H 'content-type: application/json' \
   -d '{
     "email": "alex@example.com",
+    "username": "alex",
     "password": "correct-horse-battery-staple",
     "displayName": "Alex"
   }'
 ```
 
-Registration creates the Account, its Host Profile, and a fresh server-side session. The response contains public account/profile metadata, while the raw session token is returned only through `Set-Cookie`.
+Registration creates an unverified Account and Host Profile, then sends an email verification link. Verification creates the session; registering alone does not log the user in. Old clients that omit `username` use their display name as the username. Retrying an unverified registration requires the same username and password and resends verification without renaming the account.
+
+After email verification, log in with either identifier:
+
+```bash
+curl -s -c cookies.txt http://localhost:8080/api/auth/login \
+  -H 'content-type: application/json' \
+  -d '{"login":"alex","password":"correct-horse-battery-staple"}'
+```
+
+The raw session token is returned only through `Set-Cookie`.
+
+Authentication integration tests use isolated schemas in an explicitly configured test PostgreSQL database:
+
+```bash
+TEST_DATABASE_URL=jdbc:postgresql://localhost:5432/parrot669 \
+TEST_DATABASE_USER=parrot TEST_DATABASE_PASSWORD=parrot sbt test
+```
 
 Check the current identity:
 

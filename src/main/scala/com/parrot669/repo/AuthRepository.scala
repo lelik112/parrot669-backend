@@ -15,9 +15,9 @@ final class AuthRepository[F[_]: Async](xa: Transactor[F]) {
   def createAccountAndProfile(account: AccountRecord, profile: ProfileRecord): F[(AccountRecord, ProfileRecord)] =
     (for {
       savedAccount <- sql"""
-        insert into accounts (id, email_normalized, password_hash, created_at)
-        values (${account.id}, ${account.emailNormalized}, ${account.passwordHash}, ${account.createdAt})
-        returning id, email_normalized, password_hash, email_verified, created_at
+        insert into accounts (id, email_normalized, password_hash, created_at, username)
+        values (${account.id}, ${account.emailNormalized}, ${account.passwordHash}, ${account.createdAt}, ${account.username})
+        returning id, email_normalized, password_hash, email_verified, created_at, username
       """.query[AccountRecord].unique
 
       savedProfile <- sql"""
@@ -33,9 +33,16 @@ final class AuthRepository[F[_]: Async](xa: Transactor[F]) {
 
   def findAccountByEmail(emailNormalized: String): F[Option[AccountRecord]] =
     sql"""
-      select id, email_normalized, password_hash, email_verified, created_at
+      select id, email_normalized, password_hash, email_verified, created_at, username
       from accounts
       where email_normalized = $emailNormalized
+    """.query[AccountRecord].option.transact(xa)
+
+  def findAccountByUsername(username: String): F[Option[AccountRecord]] =
+    sql"""
+      select id, email_normalized, password_hash, email_verified, created_at, username
+      from accounts
+      where lower(btrim(username)) = lower(btrim($username))
     """.query[AccountRecord].option.transact(xa)
 
   def deleteUnusedEmailVerificationTokens(accountId: UUID): F[Unit] =
@@ -82,7 +89,7 @@ final class AuthRepository[F[_]: Async](xa: Transactor[F]) {
 
   def authenticatedBySession(tokenHash: String, now: OffsetDateTime): F[Option[AuthContext]] =
     sql"""
-      select a.id, a.email_normalized, p.id, p.parrot_id, p.display_name
+      select a.id, a.email_normalized, p.id, p.parrot_id, p.display_name, a.username
       from sessions s
       join accounts a on a.id = s.account_id
       join profiles p on p.account_id = a.id
@@ -94,7 +101,7 @@ final class AuthRepository[F[_]: Async](xa: Transactor[F]) {
 
   def authContextForAccount(accountId: UUID): F[Option[AuthContext]] =
     sql"""
-      select a.id, a.email_normalized, p.id, p.parrot_id, p.display_name
+      select a.id, a.email_normalized, p.id, p.parrot_id, p.display_name, a.username
       from accounts a
       join profiles p on p.account_id = a.id
       where a.id = $accountId

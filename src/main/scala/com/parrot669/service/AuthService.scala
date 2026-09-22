@@ -47,16 +47,23 @@ final class AuthService[F[_]: Async](
       value.length <= 254 &&
       value.matches("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")
 
-  private def validateRegistration(req: RegisterRequest): Either[ServiceError, (String, String)] = {
+  private def validUsername(value: String): Boolean =
+    value.nonEmpty && value.length <= 120 && !value.contains("@") &&
+      !value.exists(c => Character.isISOControl(c))
+
+  private def validateRegistration(req: RegisterRequest): Either[ServiceError, (String, String, String)] = {
     val email = normalizedEmail(req.email)
     val displayName = normalized(req.displayName)
+    // Old clients may omit username during the rolling frontend deployment.
+    val username = normalized(req.username.getOrElse(displayName))
 
     if (!validEmail(email)) Left(Invalid("valid email is required"))
     else if (displayName.isEmpty) Left(Invalid("displayName is required"))
     else if (displayName.length > 120) Left(Invalid("displayName is too long"))
+    else if (!validUsername(username)) Left(Invalid("username must be 1-120 characters, without @ or control characters"))
     else if (req.password.length < 10) Left(Invalid("password must be at least 10 characters"))
     else if (req.password.length > 256) Left(Invalid("password is too long"))
-    else Right((email, displayName))
+    else Right((email, displayName, username))
   }
 
   private def randomToken: F[String] =
@@ -107,7 +114,8 @@ final class AuthService[F[_]: Async](
         id = context.profileId.toString,
         parrotId = context.parrotId,
         displayName = context.displayName
-      )
+      ),
+      username = context.username
     )
 
   private def createSession(accountId: UUID): F[(String, SessionRecord)] =
@@ -125,9 +133,6 @@ final class AuthService[F[_]: Async](
       )
       _ <- repo.createSession(session)
     } yield (raw, session)
-
-  private def loginKey(email: String): String =
-    email
 
   private def isRateLimited(key: String): Boolean =
     rateLimitLock.synchronized {
@@ -190,7 +195,7 @@ final class AuthService[F[_]: Async](
   def register(req: RegisterRequest): F[Either[ServiceError, RegistrationPending]] =
     validateRegistration(req) match {
       case Left(error) => Async[F].pure(Left(error))
-      case Right((email, displayName)) =>
+      case Right((email, displayName, username)) =>
         repo.findAccountByEmail(email).flatMap {
           case Some(account) if account.emailVerified =>
             Async[F].pure(Left(Conflict("unable to register with these credentials")))
@@ -199,7 +204,10 @@ final class AuthService[F[_]: Async](
               case false =>
                 Async[F].pure(Left(Conflict("unable to register with these credentials")))
               case true =>
-                sendRegistrationVerification(account)
+                repo.findAccountByUsername(username).flatMap {
+                  case Some(existing) if existing.id == account.id => sendRegistrationVerification(account)
+                  case _ => Async[F].pure(Left(Conflict("unable to register with these credentials")))
+                }
             }
           case None =>
             (for {
@@ -213,7 +221,8 @@ final class AuthService[F[_]: Async](
                 emailNormalized = email,
                 passwordHash = passwordHash,
                 emailVerified = false,
-                createdAt = createdAt
+                createdAt = createdAt,
+                username = username
               )
               profile = ProfileRecord(
                 id = profileId,
@@ -233,25 +242,33 @@ final class AuthService[F[_]: Async](
     }
 
   def login(req: LoginRequest): F[Either[ServiceError, AuthResult]] = {
-    val email = normalizedEmail(req.email)
-    val key = loginKey(email)
+    val identifier = normalized(req.login.orElse(req.email).getOrElse(""))
+    val emailLogin = identifier.contains("@")
+    val identifierKey = "identifier:" + identifier.toLowerCase(Locale.ROOT)
+    val invalidCredentials = Unauthorized("invalid email, username or password")
 
-    if (!validEmail(email) || req.password.isEmpty || req.password.length > 256)
-      Async[F].pure(Left(Unauthorized("invalid email or password")))
-    else if (isRateLimited(key))
+    if (!(if (emailLogin) validEmail(identifier) else validUsername(identifier)) || req.password.isEmpty || req.password.length > 256)
+      Async[F].pure(Left(invalidCredentials))
+    else if (isRateLimited(identifierKey))
       Async[F].pure(Left(RateLimited("too many login attempts")))
-    else
-      repo.findAccountByEmail(email).flatMap {
+    else {
+      val lookup = if (emailLogin) repo.findAccountByEmail(normalizedEmail(identifier))
+                   else repo.findAccountByUsername(identifier)
+      lookup.flatMap {
         case None =>
           consumeDummyPasswordWork(req.password) *>
-            Async[F].delay(recordLoginFailure(key)) *>
-            Async[F].pure(Left(Unauthorized("invalid email or password")))
+            Async[F].delay(recordLoginFailure(identifierKey)) *>
+            Async[F].pure(Left(invalidCredentials))
 
         case Some(account) =>
-          verifyPassword(account.passwordHash, req.password).flatMap {
+          // Email and username share one account limit; switching identifiers
+          // must not provide an extra set of password guesses.
+          val key = "account:" + account.id.toString
+          if (isRateLimited(key)) Async[F].pure(Left(RateLimited("too many login attempts")))
+          else verifyPassword(account.passwordHash, req.password).flatMap {
             case false =>
               Async[F].delay(recordLoginFailure(key)) *>
-                Async[F].pure(Left(Unauthorized("invalid email or password")))
+                Async[F].pure(Left(invalidCredentials))
 
             case true if !account.emailVerified =>
               Async[F].delay(clearLoginFailures(key)) *>
@@ -269,6 +286,7 @@ final class AuthService[F[_]: Async](
               }
           }
       }
+    }
   }
 
   def verifyEmail(req: VerifyEmailRequest): F[Either[ServiceError, AuthResult]] = {
