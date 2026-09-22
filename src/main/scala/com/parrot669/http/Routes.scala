@@ -285,85 +285,95 @@ final class Routes[F[_]: Async](
           .flatMap(result => respond(result))
 
     case request @ POST -> Root / "api" / "properties" / propertyIdRaw / "listings" =>
-      parseUuid(propertyIdRaw) match {
-        case Left(error) => respondError(error)
-        case Right(propertyId) =>
-          decode[AddListingRequest](request) { body =>
-            val token = header(request, "X-Parrot-Token")
-            service
-              .addListing(propertyId, token, body)
-              .flatMap(result => respond(result, created = true))
-          }
+      authenticated(request) { context =>
+        parseUuid(propertyIdRaw) match {
+          case Left(error) => respondError(error)
+          case Right(propertyId) =>
+            decode[AddListingRequest](request) { body =>
+              service
+                .addListing(propertyId, context.profileId, body)
+                .flatMap(result => respond(result, created = true))
+            }
+        }
       }
 
     case request @ PUT -> Root / "api" / "listings" / listingIdRaw =>
-      parseUuid(listingIdRaw) match {
-        case Left(error) => respondError(error)
-        case Right(listingId) =>
-          decode[UpdateListingRequest](request) { body =>
-            val token = header(request, "X-Parrot-Token")
-            service.updateListing(listingId, token, body).flatMap(result => respond(result))
-          }
+      authenticated(request) { context =>
+        parseUuid(listingIdRaw) match {
+          case Left(error) => respondError(error)
+          case Right(listingId) =>
+            decode[UpdateListingRequest](request) { body =>
+              service.updateListing(listingId, context.profileId, body).flatMap(result => respond(result))
+            }
+        }
       }
 
     case request @ DELETE -> Root / "api" / "listings" / listingIdRaw =>
-      parseUuid(listingIdRaw) match {
-        case Left(error) => respondError(error)
-        case Right(listingId) =>
-          val token = header(request, "X-Parrot-Token")
-          service.deleteListing(listingId, token).flatMap {
-            case Right(_)    => NoContent()
-            case Left(error) => respondError(error)
-          }
+      authenticated(request) { context =>
+        parseUuid(listingIdRaw) match {
+          case Left(error) => respondError(error)
+          case Right(listingId) =>
+            service.deleteListing(listingId, context.profileId).flatMap {
+              case Right(_)    => NoContent()
+              case Left(error) => respondError(error)
+            }
+        }
       }
 
     case request @ POST -> Root / "api" / "properties" / propertyIdRaw / "calendars" =>
-      parseUuid(propertyIdRaw) match {
-        case Left(error) => respondError(error)
-        case Right(propertyId) =>
-          decode[ConnectExternalCalendarRequest](request) { body =>
-            val token = header(request, "X-Parrot-Token")
-            service.connectExternalCalendar(propertyId, token, body).flatMap(result => respond(result, created = true))
-          }
+      authenticated(request) { context =>
+        parseUuid(propertyIdRaw) match {
+          case Left(error) => respondError(error)
+          case Right(propertyId) =>
+            decode[ConnectExternalCalendarRequest](request) { body =>
+              service
+                .connectExternalCalendar(propertyId, context.profileId, body)
+                .flatMap(result => respond(result, created = true))
+            }
+        }
       }
 
     case request @ POST -> Root / "api" / "calendars" / calendarIdRaw / "sync" =>
-      parseUuid(calendarIdRaw) match {
-        case Left(error) => respondError(error)
-        case Right(calendarId) =>
-          val token = header(request, "X-Parrot-Token")
-          service.syncExternalCalendar(calendarId, token).flatMap(result => respond(result))
+      authenticated(request) { context =>
+        parseUuid(calendarIdRaw) match {
+          case Left(error) => respondError(error)
+          case Right(calendarId) =>
+            service.syncExternalCalendar(calendarId, context.profileId).flatMap(result => respond(result))
+        }
       }
 
     case request @ PUT -> Root / "api" / "calendars" / calendarIdRaw =>
-      parseUuid(calendarIdRaw) match {
-        case Left(error) => respondError(error)
-        case Right(calendarId) =>
-          decode[UpdateExternalCalendarRequest](request) { body =>
-            val token = header(request, "X-Parrot-Token")
-            service.updateExternalCalendar(calendarId, token, body).flatMap(result => respond(result))
-          }
+      authenticated(request) { context =>
+        parseUuid(calendarIdRaw) match {
+          case Left(error) => respondError(error)
+          case Right(calendarId) =>
+            decode[UpdateExternalCalendarRequest](request) { body =>
+              service.updateExternalCalendar(calendarId, context.profileId, body).flatMap(result => respond(result))
+            }
+        }
       }
 
     case request @ DELETE -> Root / "api" / "calendars" / calendarIdRaw =>
-      parseUuid(calendarIdRaw) match {
-        case Left(error) => respondError(error)
-        case Right(calendarId) =>
-          val token = header(request, "X-Parrot-Token")
-          service.deleteExternalCalendar(calendarId, token).flatMap {
-            case Right(_) => NoContent()
-            case Left(error) => respondError(error)
-          }
+      authenticated(request) { context =>
+        parseUuid(calendarIdRaw) match {
+          case Left(error) => respondError(error)
+          case Right(calendarId) =>
+            service.deleteExternalCalendar(calendarId, context.profileId).flatMap {
+              case Right(_) => NoContent()
+              case Left(error) => respondError(error)
+            }
+        }
       }
 
     case request @ POST -> Root / "api" / "listings" / listingIdRaw / "challenges" =>
-      parseUuid(listingIdRaw) match {
-        case Left(error) => respondError(error)
-        case Right(listingId) =>
-          val token = header(request, "X-Parrot-Token")
-          service
-            .createCalendarChallenge(listingId, token)
-            .flatMap(result => respond(result, created = true))
+      authenticated(request) { context =>
+        parseUuid(listingIdRaw) match {
+          case Left(error) => respondError(error)
+          case Right(listingId) =>
+            service
+              .createCalendarChallenge(listingId, context.profileId)
+              .flatMap(result => respond(result, created = true))
+        }
       }
 
     case request @ POST -> Root / "api" / "challenges" / challengeIdRaw / "verify" =>
