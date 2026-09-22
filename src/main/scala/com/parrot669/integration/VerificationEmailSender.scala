@@ -8,6 +8,7 @@ import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
 import java.nio.charset.StandardCharsets
 import scala.concurrent.duration._
+import scala.jdk.DurationConverters._
 
 trait VerificationEmailSender[F[_]] {
   def sendVerification(email: String, verificationUrl: String): F[Unit]
