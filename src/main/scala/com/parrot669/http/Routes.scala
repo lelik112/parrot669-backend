@@ -39,9 +39,6 @@ final class Routes[F[_]: Async](
       .map(_.drop(sessionCookieName.length + 1))
       .getOrElse("")
 
-  private def clientKey(request: Request[F]): String =
-    Option(header(request, "X-Parrot-Client-IP")).filter(_.nonEmpty).getOrElse("direct")
-
   private def sessionCookie(rawToken: String): Header.Raw = {
     val secure = if (secureCookies) "; Secure" else ""
     Header.Raw(
@@ -123,7 +120,7 @@ final class Routes[F[_]: Async](
 
     case request @ POST -> Root / "api" / "auth" / "login" =>
       decode[LoginRequest](request) { body =>
-        authService.login(body, clientKey(request)).flatMap {
+        authService.login(body).flatMap {
           case Right(result) =>
             Ok(result.user).map(_.putHeaders(sessionCookie(result.sessionToken)))
           case Left(error) =>
