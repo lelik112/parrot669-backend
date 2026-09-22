@@ -169,21 +169,6 @@ Example response:
 
 The host temporarily makes the real calendar match that pattern. The middle date remains available, which makes accidental matches less likely.
 
-### Legacy profile claim
-
-Profiles created before account authentication can be attached exactly once to an authenticated account:
-
-```bash
-curl -s -b cookies.txt http://localhost:8080/api/auth/claim-legacy \
-  -H 'content-type: application/json' \
-  -d '{
-    "profileId": "<LEGACY_PROFILE_UUID>",
-    "editToken": "<LEGACY_EDIT_TOKEN>"
-  }'
-```
-
-A successful claim moves the account to the legacy Host Profile and clears its old edit-token hash. Normal owner endpoints do not accept `X-Parrot-Token`.
-
 ### Manually confirm challenge
 
 For v0 the actual observation is manual. After checking the public calendar:
@@ -215,7 +200,7 @@ The public response contains:
 - verification claims and methods;
 - whether each verification is still active.
 
-It intentionally does **not** expose private account credentials, password hashes, session tokens, or legacy edit-token hashes.
+It intentionally does **not** expose private account credentials, password hashes, or session tokens.
 
 ## API summary
 
@@ -226,7 +211,6 @@ POST /api/auth/register
 POST /api/auth/login
 POST /api/auth/logout
 GET  /api/auth/me
-POST /api/auth/claim-legacy          # temporary legacy migration path
 
 GET  /api/dashboard                  # authenticated owner dashboard
 POST /api/properties                 # authenticated owner
@@ -246,7 +230,6 @@ GET  /api/p/:parrotId                # public
 POST /api/challenges/:challengeId/verify  # admin only
 ```
 
-The compatibility routes `GET /api/profiles/:profileId/dashboard` and `POST /api/profiles/:profileId/properties` remain authenticated; the profile id must match the session identity and is not a credential.
 
 Manual verification still uses:
 
@@ -262,7 +245,7 @@ Flyway migrations live in:
 src/main/resources/db/migration/
 ```
 
-The schema is additive through V11. In particular, V11 adds `accounts`, server-side `sessions`, one-to-one account/profile ownership, nullable legacy edit-token hashes, and reserved `password_reset_tokens` storage.
+The schema is additive through V12. V11 adds `accounts`, server-side `sessions`, account/profile ownership and reserved `password_reset_tokens` storage. V12 removes the pre-account edit-token mechanism, deletes any remaining unowned legacy profiles, makes `profiles.account_id` mandatory and drops `access_token_hash`.
 
 Do not rewrite already-applied migrations. Flyway remembers checksums and will quite reasonably complain when humans attempt time travel.
 
