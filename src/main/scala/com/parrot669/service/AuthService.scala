@@ -14,7 +14,6 @@ import java.time.{OffsetDateTime, ZoneOffset}
 import java.util.{Base64, Locale, UUID}
 import java.util.concurrent.ConcurrentHashMap
 import scala.concurrent.duration._
-import scala.util.Try
 
 final class AuthService[F[_]: Async](repo: AuthRepository[F]) {
   import ServiceError._
@@ -181,7 +180,6 @@ final class AuthService[F[_]: Async](repo: AuthRepository[F]) {
                 parrotId = parrotId,
                 displayName = displayName,
                 contact = email,
-                accessTokenHash = None,
                 createdAt = createdAt
               )
               saved <- repo.createAccountAndProfile(account, profile)
@@ -250,39 +248,6 @@ final class AuthService[F[_]: Async](repo: AuthRepository[F]) {
   def logout(rawSessionToken: String): F[Unit] =
     if (normalized(rawSessionToken).isEmpty) Async[F].unit
     else repo.deleteSession(sha256(rawSessionToken))
-
-  def claimLegacy(
-      context: AuthContext,
-      req: LegacyClaimRequest
-  ): F[Either[ServiceError, AuthUser]] = {
-    val legacyProfileId =
-      Try(UUID.fromString(normalized(req.profileId))).toEither
-        .leftMap(_ => Invalid("invalid legacy profile id"))
-
-    if (normalized(req.editToken).isEmpty)
-      Async[F].pure(Left(Unauthorized("legacy profile claim failed")))
-    else
-      legacyProfileId match {
-        case Left(error) => Async[F].pure(Left(error))
-        case Right(profileId) =>
-          repo
-            .claimLegacyProfile(
-              accountId = context.accountId,
-              currentProfileId = context.profileId,
-              legacyProfileId = profileId,
-              legacyTokenHash = sha256(req.editToken)
-            )
-            .flatMap {
-              case false =>
-                Async[F].pure(Left(Unauthorized("legacy profile claim failed")))
-              case true =>
-                repo.authContextForAccount(context.accountId).map {
-                  case Some(updated) => Right(toUser(updated))
-                  case None          => Left(Unauthorized("legacy profile claim failed"))
-                }
-            }
-      }
-  }
 
   def currentUser(context: AuthContext): AuthUser =
     toUser(context)
