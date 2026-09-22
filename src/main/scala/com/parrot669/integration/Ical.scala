@@ -19,7 +19,7 @@ final case class ParsedIcalEvent(
 )
 
 object AirbnbIcal {
-  private val ListingPath = """.*/calendar/ical/([0-9]+)\.ics$""".r
+  private val ListingPath = """^/calendar/ical/([0-9]+)\.ics$""".r
 
   private def unfold(raw: String): Vector[String] =
     raw
@@ -102,7 +102,7 @@ object AirbnbIcal {
       .flatMap { uri =>
         val host = Option(uri.getHost).fold("")(_.toLowerCase)
         val isLocal = allowLocalhost && (host == "127.0.0.1" || host == "localhost")
-        val isAirbnb = host.matches("(^|.*\\.)airbnb\\.[a-z.]+$")
+        val isAirbnb = host == "airbnb.com" || host.endsWith(".airbnb.com")
         val validScheme = uri.getScheme == "https" || (isLocal && uri.getScheme == "http")
         val validPath = Option(uri.getPath).exists(path => ListingPath.findFirstMatchIn(path).nonEmpty)
 

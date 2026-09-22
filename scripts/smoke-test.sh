@@ -209,6 +209,14 @@ assert len(minimum_stay) == 1, minimum_stay
 print("Updated availability search passed")
 PY
 
+wrong_calendar_listing_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   -X POST "http://localhost:$HTTP_PORT/api/properties/$property_id/calendars"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"provider":"airbnb","icalUrl":"http://127.0.0.1:18080/calendar/ical/23456789.ics?t=ci-secret"}')
+
+test "$wrong_calendar_listing_status" = "400"
+
+lookalike_airbnb_host_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   -X POST "http://localhost:$HTTP_PORT/api/properties/$property_id/calendars"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"provider":"airbnb","icalUrl":"https://airbnb.com.evil.invalid/calendar/ical/123456789.ics?t=ci-secret"}')
+
+test "$lookalike_airbnb_host_status" = "400"
+
 calendar_json=$(curl --fail --silent -X POST   "http://localhost:$HTTP_PORT/api/properties/$property_id/calendars"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"provider":"airbnb","icalUrl":"http://127.0.0.1:18080/calendar/ical/123456789.ics?t=ci-secret"}')
 
 calendar_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$calendar_json")
@@ -252,6 +260,33 @@ assert calendars[0]["id"] == calendar_id, calendars
 assert calendars[0]["status"] == "connected", calendars
 assert len(calendars[0]["reservationBlocks"]) == 1, calendars
 print("Calendar dashboard passed")
+PY
+
+kill "$ICAL_SERVER_PID"
+wait "$ICAL_SERVER_PID" 2>/dev/null || true
+
+failed_reconnect_json=$(curl --fail --silent -X POST   "http://localhost:$HTTP_PORT/api/properties/$property_id/calendars"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"provider":"airbnb","icalUrl":"http://127.0.0.1:18080/calendar/ical/123456789.ics?t=ci-secret"}')
+
+FAILED_RECONNECT_JSON="$failed_reconnect_json" python3 - "$calendar_id" <<'PY'
+import json, os, sys
+calendar_id = sys.argv[1]
+data = json.loads(os.environ["FAILED_RECONNECT_JSON"])
+assert data["id"] == calendar_id, data
+assert data["status"] == "error", data
+assert data["lastSuccessAt"] is not None, data
+assert len(data["reservationBlocks"]) == 1, data
+assert data["reservationBlocks"][0]["from"] == "2027-01-15", data
+assert data["reservationBlocks"][0]["to"] == "2027-01-18", data
+print("Failed reconnect preserves the last good calendar snapshot")
+PY
+
+preserved_reservation_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-15&to=2027-01-16&bedrooms=2&sleeps=4")
+
+PRESERVED_RESERVATION_SEARCH_JSON="$preserved_reservation_search_json" python3 - <<'PY'
+import json, os
+data = json.loads(os.environ["PRESERVED_RESERVATION_SEARCH_JSON"])
+assert data == [], data
+print("Last good reservation snapshot still blocks search")
 PY
 
 wrong_delete_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   -X DELETE "http://localhost:$HTTP_PORT/api/availability/$availability_id"   -H 'X-Parrot-Token: definitely-wrong-token')

@@ -306,14 +306,11 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
         on conflict (property_id, provider) do update
         set ical_url = excluded.ical_url,
             status = 'pending',
-            last_synced_at = null,
-            last_success_at = null,
             last_error = null,
             updated_at = excluded.updated_at
         returning id, property_id, provider, ical_url, status,
                   last_synced_at, last_success_at, last_error, created_at, updated_at
       """.query[ExternalCalendarRecord].unique
-      _ <- sql"delete from external_calendar_events where calendar_id = ${saved.id}".update.run
     } yield saved
 
     tx.transact(xa)

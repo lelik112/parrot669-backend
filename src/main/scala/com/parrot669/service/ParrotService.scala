@@ -573,7 +573,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
                 case Right(_) =>
                   repo.listingsForProperty(propertyId).flatMap { listings =>
                     val listingMatches = listings.exists(listing =>
-                      listing.platform == "airbnb" && listing.externalId.contains(calendarListingId)
+                      listing.platform == "airbnb" && listing.externalId == calendarListingId
                     )
 
                     if (!listingMatches)
