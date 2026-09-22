@@ -18,7 +18,7 @@ final class ResendEmailSender[F[_]: Async](
   override def sendVerificationEmail(email: String, token: String): F[Unit] =
     Async[F].blocking {
       val encodedToken = URLEncoder.encode(token, StandardCharsets.UTF_8)
-      val verifyUrl = s"${publicBaseUrl.stripSuffix("/")}/verify-email?token=$encodedToken"
+      val verifyUrl = s"${publicBaseUrl.stripSuffix("/")}/host.html?verifyEmail=$encodedToken"
 
       val payload = Json
         .obj(
