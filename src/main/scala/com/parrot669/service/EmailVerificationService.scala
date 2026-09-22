@@ -41,6 +41,9 @@ final class EmailVerificationService[F[_]: Async](repo: AuthRepository[F], sende
       )
       _ <- repo.deleteUnusedEmailVerificationTokens(accountId)
       _ <- repo.createEmailVerificationToken(record)
-      _ <- sender.sendVerificationEmail(email, rawToken)
+      _ <- sender.sendVerificationEmail(email, rawToken).adaptError {
+        case error: EmailDeliveryException => error
+        case error => new EmailDeliveryException("verification email delivery failed", error)
+      }
     } yield ()
 }

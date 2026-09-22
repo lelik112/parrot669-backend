@@ -73,6 +73,8 @@ final class Routes[F[_]: Async](
         Conflict(ErrorResponse(message))
       case ServiceError.RateLimited(message) =>
         TooManyRequests(ErrorResponse(message))
+      case ServiceError.Unavailable(message) =>
+        ServiceUnavailable(ErrorResponse(message))
     }
 
   private def respond[A: Encoder](

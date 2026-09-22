@@ -22,6 +22,7 @@ object ServiceError {
   final case class Unauthorized(message: String = "authentication required") extends ServiceError
   final case class Conflict(message: String) extends ServiceError
   final case class RateLimited(message: String) extends ServiceError
+  final case class Unavailable(message: String) extends ServiceError
 }
 
 final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: IcalFetcher[F]) {

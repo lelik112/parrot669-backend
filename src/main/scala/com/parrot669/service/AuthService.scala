@@ -7,6 +7,7 @@ import com.parrot669.repo.AuthRepository
 import de.mkammerer.argon2.Argon2Factory
 import de.mkammerer.argon2.Argon2Factory.Argon2Types
 import org.postgresql.util.PSQLException
+import org.slf4j.LoggerFactory
 
 import java.nio.charset.StandardCharsets
 import java.security.{MessageDigest, SecureRandom}
@@ -27,6 +28,7 @@ final class AuthService[F[_]: Async](
   private val loginWindowMillis = 15.minutes.toMillis
   private val failedLogins = new ConcurrentHashMap[String, Vector[Long]]()
   private val rateLimitLock = new AnyRef
+  private val logger = LoggerFactory.getLogger(getClass)
 
   private def now: F[OffsetDateTime] =
     Async[F].delay(OffsetDateTime.now(ZoneOffset.UTC))
@@ -163,6 +165,28 @@ final class AuthService[F[_]: Async](
     loop(error)
   }
 
+  private def sendRegistrationVerification(
+      account: AccountRecord
+  ): F[Either[ServiceError, RegistrationPending]] =
+    emailVerificationService
+      .createVerification(account.id, account.emailNormalized)
+      .as(
+        RegistrationPending(
+          email = account.emailNormalized,
+          message = "check your email to verify your account"
+        ).asRight[ServiceError]
+      )
+      .handleErrorWith {
+        case error: EmailDeliveryException =>
+          Async[F].delay(logger.error("Verification email delivery failed", error)) *>
+            Async[F].pure(
+              Unavailable(
+                "verification email delivery is temporarily unavailable; please retry"
+              ).asLeft[RegistrationPending]
+            )
+        case error => Async[F].raiseError(error)
+      }
+
   def register(req: RegisterRequest): F[Either[ServiceError, RegistrationPending]] =
     validateRegistration(req) match {
       case Left(error) => Async[F].pure(Left(error))
@@ -175,14 +199,7 @@ final class AuthService[F[_]: Async](
               case false =>
                 Async[F].pure(Left(Conflict("unable to register with these credentials")))
               case true =>
-                emailVerificationService
-                  .createVerification(account.id, account.emailNormalized)
-                  .as(
-                    RegistrationPending(
-                      email = account.emailNormalized,
-                      message = "check your email to verify your account"
-                    ).asRight[ServiceError]
-                  )
+                sendRegistrationVerification(account)
             }
           case None =>
             (for {
@@ -206,11 +223,8 @@ final class AuthService[F[_]: Async](
                 createdAt = createdAt
               )
               saved <- repo.createAccountAndProfile(account, profile)
-              _ <- emailVerificationService.createVerification(saved._1.id, saved._1.emailNormalized)
-            } yield RegistrationPending(
-              email = saved._1.emailNormalized,
-              message = "check your email to verify your account"
-            ).asRight[ServiceError]).handleErrorWith {
+              result <- sendRegistrationVerification(saved._1)
+            } yield result).handleErrorWith {
               case error if isUniqueViolation(error) =>
                 Async[F].pure(Left(Conflict("unable to register with these credentials")))
               case error => Async[F].raiseError(error)

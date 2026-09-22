@@ -1,6 +1,7 @@
 package com.parrot669.service
 
 import cats.effect.Async
+import cats.syntax.all._
 import io.circe.Json
 
 import java.net.{URI, URLEncoder}
@@ -44,8 +45,11 @@ final class ResendEmailSender[F[_]: Async](
         client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
 
       if (response.statusCode() / 100 != 2)
-        throw new IllegalStateException(
+        throw new EmailDeliveryException(
           s"Resend email delivery failed: status=${response.statusCode()}, body=${response.body()}"
         )
+    }.adaptError {
+      case error: EmailDeliveryException => error
+      case error => new EmailDeliveryException("Resend email delivery request failed", error)
     }
 }

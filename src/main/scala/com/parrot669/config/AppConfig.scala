@@ -54,28 +54,33 @@ object AppConfig {
           if (environment == "prod") "https://parrot669.com" else "http://localhost:8787"
         }
 
-      adminToken
-        .toRight(new IllegalArgumentException("PARROT_ADMIN_TOKEN is required in prod"))
-        .map { token =>
-          AppConfig(
-            environment = environment,
-            httpPort = port,
-            db = DbConfig(
-              url = railwayJdbcUrl(env).orElse(nonEmpty(env, "DATABASE_URL")).getOrElse(
-                "jdbc:postgresql://localhost:5432/parrot669"
-              ),
-              user = nonEmpty(env, "PGUSER")
-                .orElse(nonEmpty(env, "DATABASE_USER"))
-                .getOrElse("parrot"),
-              password = nonEmpty(env, "PGPASSWORD")
-                .orElse(nonEmpty(env, "DATABASE_PASSWORD"))
-                .getOrElse("parrot")
-            ),
-            adminToken = token,
-            resendApiKey = resendApiKey,
-            resendFrom = resendFrom,
-            publicBaseUrl = publicBaseUrl
-          )
-        }
+      for {
+        token <- adminToken.toRight(
+          new IllegalArgumentException("PARROT_ADMIN_TOKEN is required in prod")
+        )
+        _ <- Either.cond(
+          environment != "prod" || resendApiKey.nonEmpty,
+          (),
+          new IllegalArgumentException("RESEND_API_KEY is required in prod")
+        )
+      } yield AppConfig(
+        environment = environment,
+        httpPort = port,
+        db = DbConfig(
+          url = railwayJdbcUrl(env).orElse(nonEmpty(env, "DATABASE_URL")).getOrElse(
+            "jdbc:postgresql://localhost:5432/parrot669"
+          ),
+          user = nonEmpty(env, "PGUSER")
+            .orElse(nonEmpty(env, "DATABASE_USER"))
+            .getOrElse("parrot"),
+          password = nonEmpty(env, "PGPASSWORD")
+            .orElse(nonEmpty(env, "DATABASE_PASSWORD"))
+            .getOrElse("parrot")
+        ),
+        adminToken = token,
+        resendApiKey = resendApiKey,
+        resendFrom = resendFrom,
+        publicBaseUrl = publicBaseUrl
+      )
     }
 }
