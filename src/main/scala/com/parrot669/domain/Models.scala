@@ -8,7 +8,6 @@ final case class ProfileRecord(
     parrotId: String,
     displayName: String,
     contact: String,
-    accessTokenHash: Option[String],
     createdAt: OffsetDateTime
 )
 
@@ -107,7 +106,6 @@ final case class VerificationRecord(
     challengeId: Option[UUID]
 )
 
-final case class CreateProfileRequest(displayName: String, contact: String)
 final case class CreatePropertyRequest(
     title: String,
     city: String,
@@ -133,12 +131,6 @@ final case class PublicProfile(
     parrotId: String,
     displayName: String,
     createdAt: String
-)
-
-final case class ProfileCreated(
-    id: String,
-    profile: PublicProfile,
-    editToken: String
 )
 
 final case class PublicListing(
