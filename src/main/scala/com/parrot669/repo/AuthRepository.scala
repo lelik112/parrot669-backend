@@ -5,6 +5,7 @@ import cats.syntax.all._
 import com.parrot669.domain._
 import doobie._
 import doobie.implicits._
+import doobie.postgres.implicits._
 
 import java.time.OffsetDateTime
 import java.util.UUID
