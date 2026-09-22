@@ -22,8 +22,11 @@ final class ResendVerificationEmailSender[F[_]: Async](
 
   override def sendVerification(email: String, verificationUrl: String): F[Unit] =
     Async[F].blocking {
+      val resendFrom =
+        if (from.contains("<")) from else s"PARROT 669 <$from>"
+
       val payload = Json.obj(
-        "from" -> Json.fromString(from),
+        "from" -> Json.fromString(resendFrom),
         "to" -> Json.arr(Json.fromString(email)),
         "subject" -> Json.fromString("Confirm your PARROT 669 email"),
         "text" -> Json.fromString(
