@@ -191,7 +191,13 @@ final class AuthService[F[_]: Async](
               profileId <- uuid
               parrotId <- randomParrotId
               createdAt <- now
-              account = AccountRecord(accountId, email, passwordHash, emailVerified = false, createdAt)
+              account = AccountRecord(
+                id = accountId,
+                emailNormalized = email,
+                passwordHash = passwordHash,
+                emailVerified = false,
+                createdAt = createdAt
+              )
               profile = ProfileRecord(
                 id = profileId,
                 parrotId = parrotId,
