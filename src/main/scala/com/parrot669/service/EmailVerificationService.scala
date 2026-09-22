@@ -38,6 +38,7 @@ final class EmailVerificationService[F[_]: Async](repo: AuthRepository[F], sende
         expiresAt = createdAt.plusHours(24),
         usedAt = None
       )
+      _ <- repo.deleteUnusedEmailVerificationTokens(accountId)
       _ <- repo.createEmailVerificationToken(record)
       _ <- sender.sendVerificationEmail(email, rawToken)
     } yield ()
