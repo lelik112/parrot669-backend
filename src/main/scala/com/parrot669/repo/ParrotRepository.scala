@@ -15,27 +15,16 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
   def health: F[Boolean] =
     sql"select true".query[Boolean].unique.transact(xa)
 
-  def createProfile(profile: ProfileRecord): F[ProfileRecord] =
-    sql"""
-      insert into profiles (
-        id, parrot_id, display_name, contact, access_token_hash, created_at
-      ) values (
-        ${profile.id}, ${profile.parrotId}, ${profile.displayName}, ${profile.contact},
-        ${profile.accessTokenHash}, ${profile.createdAt}
-      )
-      returning id, parrot_id, display_name, contact, access_token_hash, created_at
-    """.query[ProfileRecord].unique.transact(xa)
-
   def findProfile(profileId: UUID): F[Option[ProfileRecord]] =
     sql"""
-      select id, parrot_id, display_name, contact, access_token_hash, created_at
+      select id, parrot_id, display_name, contact, created_at
       from profiles
       where id = $profileId
     """.query[ProfileRecord].option.transact(xa)
 
   def findProfileByParrotId(parrotId: String): F[Option[ProfileRecord]] =
     sql"""
-      select id, parrot_id, display_name, contact, access_token_hash, created_at
+      select id, parrot_id, display_name, contact, created_at
       from profiles
       where upper(parrot_id) = upper($parrotId)
     """.query[ProfileRecord].option.transact(xa)
