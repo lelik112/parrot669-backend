@@ -173,27 +173,31 @@ other_owner_update_status=$(curl --silent --output /dev/null --write-out '%{http
   -b "$OTHER_COOKIE_JAR" \
   -X PUT "http://localhost:$HTTP_PORT/api/properties/$property_id" \
   -H 'content-type: application/json' \
-  -d '{"accommodationType":"entire_place","minStayDays":2,"cleaningFeeCents":null}')
+  -d '{"accommodationType":"entire_place","bedrooms":2,"sleeps":5,"minStayDays":2,"cleaningFeeCents":null}')
 test "$other_owner_update_status" = "404"
 
-property_settings_json=$(curl --fail --silent -X PUT "http://localhost:$HTTP_PORT/api/properties/$property_id"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"accommodationType":"private_room","minStayDays":7,"cleaningFeeCents":5500}')
+property_settings_json=$(curl --fail --silent -X PUT "http://localhost:$HTTP_PORT/api/properties/$property_id"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"accommodationType":"private_room","bedrooms":3,"sleeps":6,"minStayDays":7,"cleaningFeeCents":5500}')
 
 PROPERTY_SETTINGS_JSON="$property_settings_json" python3 - <<'PY'
 import json, os
 data = json.loads(os.environ["PROPERTY_SETTINGS_JSON"])
 assert data["accommodationType"] == "private_room", data
+assert data["bedrooms"] == 3, data
+assert data["sleeps"] == 6, data
 assert data["minStayDays"] == 7, data
 assert data["cleaningFeeCents"] == 5500, data
 print("Property settings update passed")
 PY
 
-property_settings_reset_json=$(curl --fail --silent -X PUT "http://localhost:$HTTP_PORT/api/properties/$property_id"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"accommodationType":"entire_place","minStayDays":7,"cleaningFeeCents":5500}')
+property_settings_reset_json=$(curl --fail --silent -X PUT "http://localhost:$HTTP_PORT/api/properties/$property_id"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"accommodationType":"entire_place","bedrooms":2,"sleeps":5,"minStayDays":7,"cleaningFeeCents":5500}')
 
 PROPERTY_SETTINGS_RESET_JSON="$property_settings_reset_json" python3 - <<'PY'
 import json, os
 data = json.loads(os.environ["PROPERTY_SETTINGS_RESET_JSON"])
 assert data["accommodationType"] == "entire_place", data
-print("Accommodation type edit passed")
+assert data["bedrooms"] == 2, data
+assert data["sleeps"] == 5, data
+print("Property characteristics edit passed")
 PY
 
 listing_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/properties/$property_id/listings"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"platform":"airbnb","externalId":"123456789"}')

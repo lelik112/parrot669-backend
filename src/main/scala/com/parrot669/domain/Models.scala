@@ -118,6 +118,8 @@ final case class CreatePropertyRequest(
 )
 final case class UpdatePropertyRequest(
     accommodationType: String,
+    bedrooms: Int,
+    sleeps: Int,
     minStayDays: Int,
     cleaningFeeCents: Option[Long]
 )
