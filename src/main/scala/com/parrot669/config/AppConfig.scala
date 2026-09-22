@@ -9,11 +9,20 @@ final case class DbConfig(
     driver: String = "org.postgresql.Driver"
 )
 
-final case class EmailConfig(
+sealed trait EmailConfig {
+  def from: String
+}
+
+final case class CloudflareEmailConfig(
     cloudflareAccountId: String,
     cloudflareApiToken: String,
     from: String
-)
+) extends EmailConfig
+
+final case class ResendEmailConfig(
+    apiKey: String,
+    from: String
+) extends EmailConfig
 
 final case class AppConfig(
     environment: String,
@@ -51,15 +60,30 @@ object AppConfig {
           if (environment == "prod") None else Some("dev-admin-token-change-me")
         }
 
-      val emailConfig =
+      val emailFrom =
+        nonEmpty(env, "PARROT_EMAIL_FROM").getOrElse(
+          "PARROT 669 <hello@parrot669.com>"
+        )
+
+      val resendEmailConfig =
+        nonEmpty(env, "RESEND_API_KEY").map(
+          ResendEmailConfig(
+            apiKey = _,
+            from = emailFrom
+          )
+        )
+
+      val cloudflareEmailConfig =
         for {
           accountId <- nonEmpty(env, "CLOUDFLARE_ACCOUNT_ID")
           apiToken <- nonEmpty(env, "CLOUDFLARE_EMAIL_API_TOKEN")
-        } yield EmailConfig(
+        } yield CloudflareEmailConfig(
           cloudflareAccountId = accountId,
           cloudflareApiToken = apiToken,
-          from = nonEmpty(env, "PARROT_EMAIL_FROM").getOrElse("hello@parrot669.com")
+          from = emailFrom
         )
+
+      val emailConfig = resendEmailConfig.orElse(cloudflareEmailConfig)
 
       for {
         token <- adminToken.toRight(
@@ -69,7 +93,7 @@ object AppConfig {
           environment != "prod" || emailConfig.isDefined,
           (),
           new IllegalArgumentException(
-            "CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_EMAIL_API_TOKEN are required in prod"
+            "RESEND_API_KEY or Cloudflare Email Service credentials are required in prod"
           )
         )
       } yield AppConfig(
