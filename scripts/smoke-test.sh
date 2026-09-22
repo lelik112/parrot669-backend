@@ -113,7 +113,18 @@ unknown_resend_status=$(curl --silent --output /dev/null --write-out '%{http_cod
 test "$unknown_resend_status" = "202"
 
 verification_token=$(verification_token_for "ci@example.com")
-verify_json=$(curl --fail --silent -c "$COOKIE_JAR" -b "$COOKIE_JAR"   -X POST "http://localhost:$HTTP_PORT/api/auth/verify-email"   -H 'content-type: application/json'   -d "{\"token\":\"$verification_token\"}")
+VERIFY_BODY=$(mktemp)
+verify_status=$(curl --silent -c "$COOKIE_JAR" -b "$COOKIE_JAR" --output "$VERIFY_BODY" --write-out '%{http_code}' -X POST "http://localhost:$HTTP_PORT/api/auth/verify-email" -H 'content-type: application/json' -d "{\"token\":\"$verification_token\"}")
+if [[ "$verify_status" != "200" ]]; then
+  echo "Email verification failed with HTTP $verify_status" >&2
+  cat "$VERIFY_BODY" >&2
+  echo >&2
+  cat "$LOG_FILE" >&2
+  rm -f "$VERIFY_BODY"
+  exit 1
+fi
+verify_json=$(cat "$VERIFY_BODY")
+rm -f "$VERIFY_BODY"
 
 profile_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["profile"]["id"])' <<<"$verify_json")
 parrot_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["profile"]["parrotId"])' <<<"$verify_json")
