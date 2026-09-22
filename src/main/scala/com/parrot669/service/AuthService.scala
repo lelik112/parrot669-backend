@@ -15,7 +15,10 @@ import java.util.{Base64, Locale, UUID}
 import java.util.concurrent.ConcurrentHashMap
 import scala.concurrent.duration._
 
-final class AuthService[F[_]: Async](repo: AuthRepository[F]) {
+final class AuthService[F[_]: Async](
+    repo: AuthRepository[F],
+    emailVerificationService: EmailVerificationService[F]
+) {
   import ServiceError._
 
   private val random = new SecureRandom()
@@ -160,7 +163,7 @@ final class AuthService[F[_]: Async](repo: AuthRepository[F]) {
     loop(error)
   }
 
-  def register(req: RegisterRequest): F[Either[ServiceError, AuthResult]] =
+  def register(req: RegisterRequest): F[Either[ServiceError, RegistrationPending]] =
     validateRegistration(req) match {
       case Left(error) => Async[F].pure(Left(error))
       case Right((email, displayName)) =>
@@ -174,7 +177,7 @@ final class AuthService[F[_]: Async](repo: AuthRepository[F]) {
               profileId <- uuid
               parrotId <- randomParrotId
               createdAt <- now
-              account = AccountRecord(accountId, email, passwordHash, createdAt)
+              account = AccountRecord(accountId, email, passwordHash, emailVerified = false, createdAt)
               profile = ProfileRecord(
                 id = profileId,
                 parrotId = parrotId,
@@ -183,15 +186,11 @@ final class AuthService[F[_]: Async](repo: AuthRepository[F]) {
                 createdAt = createdAt
               )
               saved <- repo.createAccountAndProfile(account, profile)
-              session <- createSession(saved._1.id)
-              context = AuthContext(
-                accountId = saved._1.id,
-                email = saved._1.emailNormalized,
-                profileId = saved._2.id,
-                parrotId = saved._2.parrotId,
-                displayName = saved._2.displayName
-              )
-            } yield AuthResult(toUser(context), session._1).asRight[ServiceError]).handleErrorWith {
+              _ <- emailVerificationService.createVerification(saved._1.id, saved._1.emailNormalized)
+            } yield RegistrationPending(
+              email = saved._1.emailNormalized,
+              message = "check your email to verify your account"
+            ).asRight[ServiceError]).handleErrorWith {
               case error if isUniqueViolation(error) =>
                 Async[F].pure(Left(Conflict("unable to register with these credentials")))
               case error => Async[F].raiseError(error)
@@ -220,6 +219,10 @@ final class AuthService[F[_]: Async](repo: AuthRepository[F]) {
               Async[F].delay(recordLoginFailure(key)) *>
                 Async[F].pure(Left(Unauthorized("invalid email or password")))
 
+            case true if !account.emailVerified =>
+              Async[F].delay(clearLoginFailures(key)) *>
+                Async[F].pure(Left(Unauthorized("email verification required")))
+
             case true =>
               for {
                 _ <- Async[F].delay(clearLoginFailures(key))
@@ -232,6 +235,36 @@ final class AuthService[F[_]: Async](repo: AuthRepository[F]) {
               }
           }
       }
+  }
+
+  def verifyEmail(req: VerifyEmailRequest): F[Either[ServiceError, AuthResult]] = {
+    val rawToken = normalized(req.token)
+
+    if (rawToken.isEmpty || rawToken.length > 256)
+      Async[F].pure(Left(Invalid("verification token is invalid or expired")))
+    else
+      for {
+        current <- now
+        token <- repo.findEmailVerificationToken(sha256(rawToken))
+        result <- token match {
+          case Some(value) if value.usedAt.isEmpty && value.expiresAt.isAfter(current) =>
+            repo.consumeEmailVerificationToken(value.id, current).flatMap {
+              case false =>
+                Async[F].pure(Left(Invalid("verification token is invalid or expired")))
+              case true =>
+                for {
+                  _ <- repo.markEmailVerified(value.accountId)
+                  session <- createSession(value.accountId)
+                  context <- repo.authContextForAccount(value.accountId)
+                } yield context match {
+                  case Some(authContext) => Right(AuthResult(toUser(authContext), session._1))
+                  case None              => Left(Unauthorized("account has no host profile"))
+                }
+            }
+          case _ =>
+            Async[F].pure(Left(Invalid("verification token is invalid or expired")))
+        }
+      } yield result
   }
 
   def authenticate(rawSessionToken: String): F[Either[ServiceError, AuthContext]] =
