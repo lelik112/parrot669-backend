@@ -158,23 +158,31 @@ final class Routes[F[_]: Async](service: ParrotService[F], adminToken: String) e
       val bedrooms = params.get("bedrooms").fold(Option(1))(_.toIntOption)
       val sleeps = params.get("sleeps").fold(Option(1))(_.toIntOption)
       val pricedOnly = params.get("pricedOnly").exists(_.equalsIgnoreCase("true"))
+      val minPriceRaw = params.get("minPriceCents")
+      val maxPriceRaw = params.get("maxPriceCents")
+      val minPriceCents = minPriceRaw.flatMap(_.toLongOption)
+      val maxPriceCents = maxPriceRaw.flatMap(_.toLongOption)
 
-      (bedrooms, sleeps) match {
-        case (None, _) => respondError(ServiceError.Invalid("bedrooms must be an integer"))
-        case (_, None) => respondError(ServiceError.Invalid("sleeps must be an integer"))
-        case (Some(bedroomCount), Some(sleepCount)) =>
-          service
-            .search(
-              city = params.getOrElse("city", ""),
-              fromRaw = params.getOrElse("from", ""),
-              toRaw = params.getOrElse("to", ""),
-              bedrooms = bedroomCount,
-              sleeps = sleepCount,
-              accommodationTypeRaw = params.get("accommodationType"),
-              pricedOnly = pricedOnly
-            )
-            .flatMap(result => respond(result))
-      }
+      if (bedrooms.isEmpty) respondError(ServiceError.Invalid("bedrooms must be an integer"))
+      else if (sleeps.isEmpty) respondError(ServiceError.Invalid("sleeps must be an integer"))
+      else if (minPriceRaw.isDefined && minPriceCents.isEmpty)
+        respondError(ServiceError.Invalid("minPriceCents must be an integer"))
+      else if (maxPriceRaw.isDefined && maxPriceCents.isEmpty)
+        respondError(ServiceError.Invalid("maxPriceCents must be an integer"))
+      else
+        service
+          .search(
+            city = params.getOrElse("city", ""),
+            fromRaw = params.getOrElse("from", ""),
+            toRaw = params.getOrElse("to", ""),
+            bedrooms = bedrooms.get,
+            sleeps = sleeps.get,
+            accommodationTypeRaw = params.get("accommodationType"),
+            pricedOnly = pricedOnly,
+            minPriceCents = minPriceCents,
+            maxPriceCents = maxPriceCents
+          )
+          .flatMap(result => respond(result))
 
     case request @ POST -> Root / "api" / "properties" / propertyIdRaw / "listings" =>
       parseUuid(propertyIdRaw) match {

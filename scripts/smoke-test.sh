@@ -422,6 +422,37 @@ assert priced == [], priced
 print("Incomplete price behavior passed")
 PY
 
+sort_property_json=$(curl --fail --silent -X POST "http://localhost:$HTTP_PORT/api/profiles/$profile_id/properties"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"title":"Budget Apartment","city":"Barcelona","accommodationType":"entire_place","bedrooms":2,"sleeps":4}')
+
+sort_property_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$sort_property_json")
+
+curl --fail --silent -X POST "http://localhost:$HTTP_PORT/api/properties/$sort_property_id/availability"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"from":"2027-04-02","to":"2027-04-09","nightlyPriceCents":9000}' >/dev/null
+
+sorted_price_search_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-04-02&to=2027-04-09&bedrooms=2&sleeps=4")
+price_range_search_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-04-02&to=2027-04-09&bedrooms=2&sleeps=4&minPriceCents=62000&maxPriceCents=64000")
+price_range_empty_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-04-02&to=2027-04-09&bedrooms=2&sleeps=4&minPriceCents=64001")
+
+SORTED_PRICE_SEARCH_JSON="$sorted_price_search_json" PRICE_RANGE_SEARCH_JSON="$price_range_search_json" PRICE_RANGE_EMPTY_JSON="$price_range_empty_json" python3 - "$sort_property_id" "$property_id" <<'PY'
+import json, os, sys
+priced_id, unpriced_id = sys.argv[1:3]
+sorted_results = json.loads(os.environ["SORTED_PRICE_SEARCH_JSON"])
+ranged = json.loads(os.environ["PRICE_RANGE_SEARCH_JSON"])
+empty = json.loads(os.environ["PRICE_RANGE_EMPTY_JSON"])
+
+assert len(sorted_results) == 2, sorted_results
+assert sorted_results[0]["propertyId"] == priced_id, sorted_results
+assert sorted_results[0]["price"]["estimatedAmountCents"] == 63000, sorted_results
+assert sorted_results[1]["propertyId"] == unpriced_id, sorted_results
+assert sorted_results[1]["price"] is None, sorted_results
+
+assert len(ranged) == 1, ranged
+assert ranged[0]["propertyId"] == priced_id, ranged
+assert empty == [], empty
+print("Price sorting and range filters passed")
+PY
+
+curl --fail --silent -X DELETE "http://localhost:$HTTP_PORT/api/properties/$sort_property_id"   -H "X-Parrot-Token: $edit_token"   --output /dev/null
+
 challenge_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/listings/$listing_id/challenges"   -H "X-Parrot-Token: $edit_token")
 
 challenge_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$challenge_json")

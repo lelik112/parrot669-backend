@@ -473,7 +473,9 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
       bedrooms: Int,
       sleeps: Int,
       accommodationTypeRaw: Option[String],
-      pricedOnly: Boolean
+      pricedOnly: Boolean,
+      minPriceCents: Option[Long],
+      maxPriceCents: Option[Long]
   ): F[Either[ServiceError, List[SearchResult]]] = {
     val validated =
       for {
@@ -483,6 +485,16 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
         _ <- Either.cond(to.isAfter(from), (), Invalid("to must be after from; checkout date is exclusive"))
         _ <- Either.cond(bedrooms >= 1 && bedrooms <= 20, (), Invalid("bedrooms must be between 1 and 20"))
         _ <- Either.cond(sleeps >= 1 && sleeps <= 40, (), Invalid("sleeps must be between 1 and 40"))
+        _ <- Either.cond(minPriceCents.forall(_ >= 0), (), Invalid("minPriceCents must be non-negative"))
+        _ <- Either.cond(maxPriceCents.forall(_ >= 0), (), Invalid("maxPriceCents must be non-negative"))
+        _ <- Either.cond(
+          (minPriceCents, maxPriceCents) match {
+            case (Some(min), Some(max)) => min <= max
+            case _                      => true
+          },
+          (),
+          Invalid("minPriceCents must be less than or equal to maxPriceCents")
+        )
         accommodationType <- searchAccommodationType(accommodationTypeRaw)
         stayDays = ChronoUnit.DAYS.between(from, to).toInt
       } yield (from, to, stayDays, accommodationType)
@@ -490,7 +502,8 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
     validated match {
       case Left(error) => fail[List[SearchResult]](error)
       case Right((from, to, stayDays, accommodationType)) =>
-        repo.searchAvailable(from, to, bedrooms, sleeps, stayDays, accommodationType, pricedOnly).flatMap { matches =>
+        val requirePrice = pricedOnly || minPriceCents.isDefined || maxPriceCents.isDefined
+        repo.searchAvailable(from, to, bedrooms, sleeps, stayDays, accommodationType, requirePrice).flatMap { matches =>
           matches.traverse { item =>
             (repo.listingsForProperty(item.propertyId), repo.propertyCleaningFee(item.propertyId)).mapN { (listings, cleaningFee) =>
               val price = item.nightlyTotalCents.map { nightlySubtotal =>
@@ -518,7 +531,27 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
                 links = listings.map(toPublicListing)
               )
             }
-          }.map(_.asRight[ServiceError])
+          }.map { results =>
+            results
+              .filter { result =>
+                result.price match {
+                  case Some(price) =>
+                    minPriceCents.forall(price.estimatedAmountCents >= _) &&
+                    maxPriceCents.forall(price.estimatedAmountCents <= _)
+                  case None =>
+                    minPriceCents.isEmpty && maxPriceCents.isEmpty && !pricedOnly
+                }
+              }
+              .sortBy { result =>
+                (
+                  result.price.fold(1)(_ => 0),
+                  result.price.fold(Long.MaxValue)(_.estimatedAmountCents),
+                  result.propertyTitle.toLowerCase,
+                  result.propertyId
+                )
+              }
+              .asRight[ServiceError]
+          }
         }
     }
   }
