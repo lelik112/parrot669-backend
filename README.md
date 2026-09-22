@@ -265,7 +265,7 @@ Flyway migrations live in:
 src/main/resources/db/migration/
 ```
 
-The schema is additive through V13. V11 adds `accounts`, server-side `sessions`, account/profile ownership and reserved `password_reset_tokens` storage. V12 removes the pre-account edit-token mechanism. V13 adds `accounts.email_verified_at` and hashed, expiring, one-time email-verification tokens; existing accounts are grandfathered as verified.
+The schema is additive through V14. V11 adds `accounts`, server-side `sessions`, account/profile ownership and reserved `password_reset_tokens` storage. V12 removes the pre-account edit-token mechanism. V14 adds `accounts.email_verified_at` and hashed, expiring, one-time email-verification tokens; existing accounts are grandfathered as verified.
 
 Do not rewrite already-applied migrations. Flyway remembers checksums and will quite reasonably complain when humans attempt time travel.
 
