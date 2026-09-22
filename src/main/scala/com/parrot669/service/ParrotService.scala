@@ -10,6 +10,7 @@ import java.security.SecureRandom
 import java.time.{LocalDate, OffsetDateTime, ZoneId, ZoneOffset}
 import java.time.temporal.ChronoUnit
 import java.util.UUID
+import org.postgresql.util.PSQLException
 import scala.util.Try
 
 sealed trait ServiceError {
@@ -41,6 +42,18 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
 
   private def fail[A](error: ServiceError): F[Either[ServiceError, A]] =
     Async[F].pure(Left(error))
+
+  private val availabilityOverlapConstraint = "availability_periods_no_overlap"
+
+  private def isAvailabilityOverlapViolation(error: Throwable): Boolean =
+    error match {
+      case postgres: PSQLException =>
+        postgres.getSQLState == "23P01" &&
+        Option(postgres.getServerErrorMessage)
+          .flatMap(message => Option(message.getConstraint))
+          .contains(availabilityOverlapConstraint)
+      case _ => false
+    }
 
   private def parseDate(raw: String, field: String): Either[ServiceError, LocalDate] =
     Try(LocalDate.parse(normalized(raw))).toEither.leftMap(_ => Invalid(s"$field must be YYYY-MM-DD"))
@@ -321,7 +334,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
                     for {
                       id <- uuid
                       createdAt <- now
-                      saved <- repo.createAvailability(
+                      result <- repo.createAvailability(
                         AvailabilityRecord(
                           id = id,
                           propertyId = propertyId,
@@ -330,8 +343,16 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
                           nightlyPriceCents = nightlyPriceCents,
                           createdAt = createdAt
                         )
-                      )
-                    } yield toAvailabilityCreated(saved).asRight[ServiceError]
+                      ).attempt
+                      response <- result match {
+                        case Right(saved) =>
+                          Async[F].pure(toAvailabilityCreated(saved).asRight[ServiceError])
+                        case Left(error) if isAvailabilityOverlapViolation(error) =>
+                          fail[AvailabilityCreated](Conflict("availability period overlaps an existing period"))
+                        case Left(error) =>
+                          Async[F].raiseError[Either[ServiceError, AvailabilityCreated]](error)
+                      }
+                    } yield response
                 }
             }
         }
@@ -379,9 +400,15 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
                 repo.hasOverlappingAvailabilityForUpdate(availabilityId, dateFrom, dateTo).flatMap {
                   case true => fail[AvailabilityCreated](Conflict("availability period overlaps an existing period"))
                   case false =>
-                    repo.updateAvailability(availabilityId, dateFrom, dateTo, nightlyPriceCents).flatMap {
-                      case None => fail[AvailabilityCreated](NotFound("availability period not found"))
-                      case Some(saved) => Async[F].pure(toAvailabilityCreated(saved).asRight[ServiceError])
+                    repo.updateAvailability(availabilityId, dateFrom, dateTo, nightlyPriceCents).attempt.flatMap {
+                      case Right(None) =>
+                        fail[AvailabilityCreated](NotFound("availability period not found"))
+                      case Right(Some(saved)) =>
+                        Async[F].pure(toAvailabilityCreated(saved).asRight[ServiceError])
+                      case Left(error) if isAvailabilityOverlapViolation(error) =>
+                        fail[AvailabilityCreated](Conflict("availability period overlaps an existing period"))
+                      case Left(error) =>
+                        Async[F].raiseError[Either[ServiceError, AvailabilityCreated]](error)
                     }
                 }
             }

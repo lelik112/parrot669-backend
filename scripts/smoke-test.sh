@@ -70,6 +70,18 @@ curl --fail --silent "http://localhost:$HTTP_PORT/health" >/dev/null || {
   exit 1
 }
 
+if command -v psql >/dev/null 2>&1; then
+  constraint_count=$(PGPASSWORD="$DATABASE_PASSWORD" psql \
+    -h localhost \
+    -p 5432 \
+    -U "$DATABASE_USER" \
+    -d parrot669 \
+    -Atc "select count(*) from pg_constraint where conname = 'availability_periods_no_overlap' and contype = 'x'")
+
+  test "$constraint_count" = "1"
+  echo "Availability exclusion constraint installed"
+fi
+
 AUTH_TEST_PASSWORD="ci-auth-password-12345"
 
 register_json=$(curl --fail --silent -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
