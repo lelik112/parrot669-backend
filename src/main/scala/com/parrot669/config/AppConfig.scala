@@ -9,11 +9,19 @@ final case class DbConfig(
     driver: String = "org.postgresql.Driver"
 )
 
+final case class EmailConfig(
+    cloudflareAccountId: String,
+    cloudflareApiToken: String,
+    from: String
+)
+
 final case class AppConfig(
     environment: String,
     httpPort: Int,
     db: DbConfig,
-    adminToken: String
+    adminToken: String,
+    publicBaseUrl: String,
+    email: Option[EmailConfig]
 )
 
 object AppConfig {
@@ -43,25 +51,46 @@ object AppConfig {
           if (environment == "prod") None else Some("dev-admin-token-change-me")
         }
 
-      adminToken
-        .toRight(new IllegalArgumentException("PARROT_ADMIN_TOKEN is required in prod"))
-        .map { token =>
-          AppConfig(
-            environment = environment,
-            httpPort = port,
-            db = DbConfig(
-              url = railwayJdbcUrl(env).orElse(nonEmpty(env, "DATABASE_URL")).getOrElse(
-                "jdbc:postgresql://localhost:5432/parrot669"
-              ),
-              user = nonEmpty(env, "PGUSER")
-                .orElse(nonEmpty(env, "DATABASE_USER"))
-                .getOrElse("parrot"),
-              password = nonEmpty(env, "PGPASSWORD")
-                .orElse(nonEmpty(env, "DATABASE_PASSWORD"))
-                .getOrElse("parrot")
-            ),
-            adminToken = token
+      val emailConfig =
+        for {
+          accountId <- nonEmpty(env, "CLOUDFLARE_ACCOUNT_ID")
+          apiToken <- nonEmpty(env, "CLOUDFLARE_EMAIL_API_TOKEN")
+        } yield EmailConfig(
+          cloudflareAccountId = accountId,
+          cloudflareApiToken = apiToken,
+          from = nonEmpty(env, "PARROT_EMAIL_FROM").getOrElse("hello@parrot669.com")
+        )
+
+      for {
+        token <- adminToken.toRight(
+          new IllegalArgumentException("PARROT_ADMIN_TOKEN is required in prod")
+        )
+        _ <- Either.cond(
+          environment != "prod" || emailConfig.isDefined,
+          (),
+          new IllegalArgumentException(
+            "CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_EMAIL_API_TOKEN are required in prod"
           )
-        }
+        )
+      } yield AppConfig(
+        environment = environment,
+        httpPort = port,
+        db = DbConfig(
+          url = railwayJdbcUrl(env).orElse(nonEmpty(env, "DATABASE_URL")).getOrElse(
+            "jdbc:postgresql://localhost:5432/parrot669"
+          ),
+          user = nonEmpty(env, "PGUSER")
+            .orElse(nonEmpty(env, "DATABASE_USER"))
+            .getOrElse("parrot"),
+          password = nonEmpty(env, "PGPASSWORD")
+            .orElse(nonEmpty(env, "DATABASE_PASSWORD"))
+            .getOrElse("parrot")
+        ),
+        adminToken = token,
+        publicBaseUrl = nonEmpty(env, "PUBLIC_BASE_URL").getOrElse(
+          if (environment == "prod") "https://parrot669.com" else "http://localhost:8788"
+        ),
+        email = emailConfig
+      )
     }
 }
