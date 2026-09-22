@@ -66,12 +66,12 @@ object AppConfig {
         )
 
       val resendEmailConfig =
-        nonEmpty(env, "RESEND_API_KEY").map(
+        nonEmpty(env, "RESEND_API_KEY").map { apiKey =>
           ResendEmailConfig(
-            apiKey = _,
+            apiKey = apiKey,
             from = emailFrom
           )
-        )
+        }
 
       val cloudflareEmailConfig =
         for {
