@@ -24,6 +24,7 @@ lazy val root = (project in file("."))
       "org.postgresql" % "postgresql" % "42.7.7",
       "org.flywaydb" % "flyway-core" % "11.8.2",
       "org.flywaydb" % "flyway-database-postgresql" % "11.8.2",
+      "de.mkammerer" % "argon2-jvm" % "2.12",
       "ch.qos.logback" % "logback-classic" % "1.5.18"
     ),
     Compile / run / fork := true,
