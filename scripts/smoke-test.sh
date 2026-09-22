@@ -80,6 +80,7 @@ verification_token_for() {
     if [[ -n "$line" ]]; then
       local url="${line##* }"
       local token="${url##*#verify=}"
+      token=$(printf '%s' "$token" | tr -cd 'A-Za-z0-9_-')
       if [[ -n "$token" && "$token" != "$url" ]]; then
         printf '%s' "$token"
         return 0
