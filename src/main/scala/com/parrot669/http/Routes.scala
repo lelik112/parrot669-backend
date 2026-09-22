@@ -111,8 +111,16 @@ final class Routes[F[_]: Async](
     case request @ POST -> Root / "api" / "auth" / "register" =>
       decode[RegisterRequest](request) { body =>
         authService.register(body).flatMap {
+          case Right(result) => Created(result)
+          case Left(error)   => respondError(error)
+        }
+      }
+
+    case request @ POST -> Root / "api" / "auth" / "verify-email" =>
+      decode[VerifyEmailRequest](request) { body =>
+        authService.verifyEmail(body).flatMap {
           case Right(result) =>
-            Created(result.user).map(_.putHeaders(sessionCookie(result.sessionToken)))
+            Ok(result.user).map(_.putHeaders(sessionCookie(result.sessionToken)))
           case Left(error) =>
             respondError(error)
         }
