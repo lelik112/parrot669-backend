@@ -62,12 +62,14 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
 
   def updatePropertySettings(
       propertyId: UUID,
+      accommodationType: String,
       minStayDays: Int,
       cleaningFeeCents: Option[Long]
   ): F[Option[PropertyRecord]] =
     sql"""
       update properties
-      set min_stay_days = $minStayDays,
+      set accommodation_type = $accommodationType,
+          min_stay_days = $minStayDays,
           cleaning_fee_cents = $cleaningFeeCents
       where id = $propertyId
       returning id, profile_id, title, city, accommodation_type, bedrooms, sleeps,

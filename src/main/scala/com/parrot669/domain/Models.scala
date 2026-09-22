@@ -115,7 +115,11 @@ final case class CreatePropertyRequest(
     sleeps: Int,
     minStayDays: Option[Int]
 )
-final case class UpdatePropertyRequest(minStayDays: Int, cleaningFeeCents: Option[Long])
+final case class UpdatePropertyRequest(
+    accommodationType: String,
+    minStayDays: Int,
+    cleaningFeeCents: Option[Long]
+)
 final case class AddListingRequest(platform: String, externalId: String, cleaningFeeCents: Option[Long])
 final case class UpdateListingRequest(cleaningFeeCents: Option[Long])
 final case class AddAvailabilityRequest(from: String, to: String, nightlyPriceCents: Option[Long])

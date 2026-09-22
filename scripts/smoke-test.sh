@@ -77,14 +77,24 @@ property_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/
 
 property_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$property_json")
 
-property_settings_json=$(curl --fail --silent -X PUT "http://localhost:$HTTP_PORT/api/properties/$property_id"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"minStayDays":7,"cleaningFeeCents":5500}')
+property_settings_json=$(curl --fail --silent -X PUT "http://localhost:$HTTP_PORT/api/properties/$property_id"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"accommodationType":"private_room","minStayDays":7,"cleaningFeeCents":5500}')
 
 PROPERTY_SETTINGS_JSON="$property_settings_json" python3 - <<'PY'
 import json, os
 data = json.loads(os.environ["PROPERTY_SETTINGS_JSON"])
+assert data["accommodationType"] == "private_room", data
 assert data["minStayDays"] == 7, data
 assert data["cleaningFeeCents"] == 5500, data
 print("Property settings update passed")
+PY
+
+property_settings_reset_json=$(curl --fail --silent -X PUT "http://localhost:$HTTP_PORT/api/properties/$property_id"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"accommodationType":"entire_place","minStayDays":7,"cleaningFeeCents":5500}')
+
+PROPERTY_SETTINGS_RESET_JSON="$property_settings_reset_json" python3 - <<'PY'
+import json, os
+data = json.loads(os.environ["PROPERTY_SETTINGS_RESET_JSON"])
+assert data["accommodationType"] == "entire_place", data
+print("Accommodation type edit passed")
 PY
 
 listing_json=$(curl --fail --silent   -X POST "http://localhost:$HTTP_PORT/api/properties/$property_id/listings"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"platform":"airbnb","externalId":"123456789"}')
@@ -457,7 +467,7 @@ assert data["method"] == "calendar_challenge", data
 print("Verification response passed")
 PY
 
-updated_property_json=$(curl --fail --silent -X PUT   "http://localhost:$HTTP_PORT/api/properties/$property_id"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"minStayDays":7,"cleaningFeeCents":6500}')
+updated_property_json=$(curl --fail --silent -X PUT   "http://localhost:$HTTP_PORT/api/properties/$property_id"   -H 'content-type: application/json'   -H "X-Parrot-Token: $edit_token"   -d '{"accommodationType":"entire_place","minStayDays":7,"cleaningFeeCents":6500}')
 
 UPDATED_PROPERTY_JSON="$updated_property_json" python3 - <<'PY'
 import json, os

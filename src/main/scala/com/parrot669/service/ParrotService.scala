@@ -309,8 +309,11 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
       propertyId: UUID,
       editToken: String,
       req: UpdatePropertyRequest
-  ): F[Either[ServiceError, PropertyCreated]] =
-    if (req.minStayDays < 1 || req.minStayDays > 365)
+  ): F[Either[ServiceError, PropertyCreated]] = {
+    val accommodationType = normalized(req.accommodationType).toLowerCase
+    if (!accommodationTypes.contains(accommodationType))
+      fail[PropertyCreated](Invalid("accommodationType must be entire_place or private_room"))
+    else if (req.minStayDays < 1 || req.minStayDays > 365)
       fail[PropertyCreated](Invalid("minStayDays must be between 1 and 365"))
     else if (!validCleaningFee(req.cleaningFeeCents))
       fail[PropertyCreated](Invalid("cleaningFeeCents must be between 0 and 10000000 when provided"))
@@ -321,7 +324,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
           authorize(profileId, editToken).flatMap {
             case Left(error) => fail[PropertyCreated](error)
             case Right(_) =>
-              repo.updatePropertySettings(propertyId, req.minStayDays, req.cleaningFeeCents).flatMap {
+              repo.updatePropertySettings(propertyId, accommodationType, req.minStayDays, req.cleaningFeeCents).flatMap {
                 case None => fail[PropertyCreated](NotFound("property not found"))
                 case Some(saved) =>
                   Async[F].pure(
@@ -340,6 +343,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
               }
           }
       }
+  }
 
   def deleteProperty(
       propertyId: UUID,
