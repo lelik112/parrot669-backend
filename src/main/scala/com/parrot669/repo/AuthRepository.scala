@@ -17,7 +17,7 @@ final class AuthRepository[F[_]: Async](xa: Transactor[F]) {
       savedAccount <- sql"""
         insert into accounts (id, email_normalized, password_hash, created_at)
         values (${account.id}, ${account.emailNormalized}, ${account.passwordHash}, ${account.createdAt})
-        returning id, email_normalized, password_hash, created_at
+        returning id, email_normalized, password_hash, email_verified, created_at
       """.query[AccountRecord].unique
 
       savedProfile <- sql"""
@@ -33,7 +33,7 @@ final class AuthRepository[F[_]: Async](xa: Transactor[F]) {
 
   def findAccountByEmail(emailNormalized: String): F[Option[AccountRecord]] =
     sql"""
-      select id, email_normalized, password_hash, created_at
+      select id, email_normalized, password_hash, email_verified, created_at
       from accounts
       where email_normalized = $emailNormalized
     """.query[AccountRecord].option.transact(xa)
@@ -52,7 +52,15 @@ final class AuthRepository[F[_]: Async](xa: Transactor[F]) {
       limit 1
     """.query[EmailVerificationTokenRecord].option.transact(xa)
 
-  def markEmailVerified(accountId: UUID, verifiedAt: OffsetDateTime): F[Unit] =
+  def consumeEmailVerificationToken(tokenId: UUID, usedAt: OffsetDateTime): F[Boolean] =
+    sql"""
+      update email_verification_tokens
+      set used_at = $usedAt
+      where id = $tokenId
+        and used_at is null
+    """.update.run.transact(xa).map(_ == 1)
+
+  def markEmailVerified(accountId: UUID): F[Unit] =
     sql"""
       update accounts
       set email_verified = true
@@ -73,6 +81,7 @@ final class AuthRepository[F[_]: Async](xa: Transactor[F]) {
       join profiles p on p.account_id = a.id
       where s.token_hash = $tokenHash
         and s.expires_at > $now
+        and a.email_verified = true
       limit 1
     """.query[AuthContext].option.transact(xa)
 
