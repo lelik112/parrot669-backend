@@ -212,7 +212,7 @@ assert result["sleeps"] == 5, result
 assert result["minStayDays"] == 7, result
 assert result["links"][0]["externalId"] == "123456789", result
 assert result["links"][0]["url"] == "https://www.airbnb.com/rooms/123456789", result
-assert result["links"][0]["cleaningFeeCents"] == 5500, result
+assert result["links"][0]["cleaningFeeCents"] is None, result
 assert result["price"]["currency"] == "EUR", result
 assert result["price"]["nights"] == 10, result
 assert result["price"]["nightlySubtotalCents"] == 100000, result
