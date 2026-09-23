@@ -218,6 +218,12 @@ PY
 missing_country_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   "http://localhost:$HTTP_PORT/api/locations/cities")
 test "$missing_country_status" = "400"
 
+missing_search_country_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
+test "$missing_search_country_status" = "400"
+
+missing_search_city_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   "http://localhost:$HTTP_PORT/api/search?country=ES&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
+test "$missing_search_city_status" = "400"
+
 curl --fail --silent \
   -X POST "http://localhost:$HTTP_PORT/api/auth/register" \
   -H 'content-type: application/json' \
@@ -339,7 +345,7 @@ PY
 
 hidden_listing_json=$(curl --fail --silent -X PUT "http://localhost:$HTTP_PORT/api/listings/$listing_id"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"showInSearch":false}')
 
-hidden_link_search_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
+hidden_link_search_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/search?country=ES&city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
 
 HIDDEN_LISTING_JSON="$hidden_listing_json" HIDDEN_LINK_SEARCH_JSON="$hidden_link_search_json" python3 - <<'PY'
 import json, os
@@ -353,31 +359,31 @@ PY
 
 curl --fail --silent -X PUT "http://localhost:$HTTP_PORT/api/listings/$listing_id"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"showInSearch":true}' >/dev/null
 
-search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
+search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?country=ES&city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
 
-updated_boundary_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-05&to=2027-03-05&bedrooms=2&sleeps=4")
+updated_boundary_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?country=ES&city=Barcelona&from=2027-01-05&to=2027-03-05&bedrooms=2&sleeps=4")
 
-old_left_boundary_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-01&to=2027-01-20&bedrooms=2&sleeps=4")
+old_left_boundary_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?country=ES&city=Barcelona&from=2027-01-01&to=2027-01-20&bedrooms=2&sleeps=4")
 
-outside_right_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-20&to=2027-03-06&bedrooms=2&sleeps=4")
+outside_right_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?country=ES&city=Barcelona&from=2027-01-20&to=2027-03-06&bedrooms=2&sleeps=4")
 
-too_many_bedrooms_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=3&sleeps=4")
+too_many_bedrooms_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?country=ES&city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=3&sleeps=4")
 
-too_many_guests_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=6")
+too_many_guests_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?country=ES&city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=6")
 
-too_short_stay_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-15&bedrooms=2&sleeps=4")
+too_short_stay_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?country=ES&city=Barcelona&from=2027-01-10&to=2027-01-15&bedrooms=2&sleeps=4")
 
-minimum_stay_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-17&bedrooms=2&sleeps=4")
+minimum_stay_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?country=ES&city=Barcelona&from=2027-01-10&to=2027-01-17&bedrooms=2&sleeps=4")
 
-entire_place_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4&accommodationType=entire_place")
+entire_place_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?country=ES&city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4&accommodationType=entire_place")
 
-private_room_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4&accommodationType=private_room")
+private_room_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?country=ES&city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4&accommodationType=private_room")
 
-invalid_accommodation_type_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4&accommodationType=castle")
+invalid_accommodation_type_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   "http://localhost:$HTTP_PORT/api/search?country=ES&city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4&accommodationType=castle")
 
 test "$invalid_accommodation_type_status" = "400"
 
-zero_night_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-23&to=2027-01-23&bedrooms=2&sleeps=4")
+zero_night_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   "http://localhost:$HTTP_PORT/api/search?country=ES&city=Barcelona&from=2027-01-23&to=2027-01-23&bedrooms=2&sleeps=4")
 
 test "$zero_night_status" = "400"
 
@@ -470,9 +476,9 @@ assert "icalUrl" not in data, data
 print("Airbnb iCal connection passed")
 PY
 
-reserved_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
+reserved_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?country=ES&city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
 
-platform_unavailable_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-20&to=2027-01-30&bedrooms=2&sleeps=4")
+platform_unavailable_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?country=ES&city=Barcelona&from=2027-01-20&to=2027-01-30&bedrooms=2&sleeps=4")
 
 RESERVED_SEARCH_JSON="$reserved_search_json" PLATFORM_UNAVAILABLE_SEARCH_JSON="$platform_unavailable_search_json" python3 - <<'PY'
 import json, os
@@ -485,7 +491,7 @@ PY
 
 disabled_calendar_json=$(curl --fail --silent -X PUT   "http://localhost:$HTTP_PORT/api/calendars/$calendar_id"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"enabled":false}')
 
-disabled_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
+disabled_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?country=ES&city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
 
 DISABLED_CALENDAR_JSON="$disabled_calendar_json" DISABLED_SEARCH_JSON="$disabled_search_json" python3 - <<'PY'
 import json, os
@@ -498,7 +504,7 @@ PY
 
 enabled_calendar_json=$(curl --fail --silent -X PUT   "http://localhost:$HTTP_PORT/api/calendars/$calendar_id"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"enabled":true}')
 
-enabled_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
+enabled_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?country=ES&city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
 
 ENABLED_CALENDAR_JSON="$enabled_calendar_json" ENABLED_SEARCH_JSON="$enabled_search_json" python3 - <<'PY'
 import json, os
@@ -541,7 +547,7 @@ assert data["reservationBlocks"][0]["to"] == "2027-01-18", data
 print("Failed reconnect preserves the last good calendar snapshot")
 PY
 
-preserved_reservation_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
+preserved_reservation_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?country=ES&city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
 
 PRESERVED_RESERVATION_SEARCH_JSON="$preserved_reservation_search_json" python3 - <<'PY'
 import json, os
@@ -558,7 +564,7 @@ curl --fail --silent   -X DELETE "http://localhost:$HTTP_PORT/api/availability/$
 
 after_delete_list_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/properties/$property_id/availability"   -b "$COOKIE_JAR")
 
-after_delete_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
+after_delete_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?country=ES&city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
 
 AFTER_DELETE_LIST_JSON="$after_delete_list_json" AFTER_DELETE_SEARCH_JSON="$after_delete_search_json" python3 - <<'PY'
 import json
@@ -579,7 +585,7 @@ period_b_json=$(curl --fail --silent -X POST   "http://localhost:$HTTP_PORT/api/
 
 period_b_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$period_b_json")
 
-adjacent_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-04-02&to=2027-04-09&bedrooms=2&sleeps=4&pricedOnly=true")
+adjacent_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?country=ES&city=Barcelona&from=2027-04-02&to=2027-04-09&bedrooms=2&sleeps=4&pricedOnly=true")
 
 ADJACENT_SEARCH_JSON="$adjacent_search_json" python3 - <<'PY'
 import json, os
@@ -598,9 +604,9 @@ test "$overlap_status" = "409"
 
 curl --fail --silent -X PUT   "http://localhost:$HTTP_PORT/api/availability/$period_b_id"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"from":"2027-04-05","to":"2027-04-10","nightlyPriceCents":null}'   >/dev/null
 
-all_prices_missing_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-04-02&to=2027-04-09&bedrooms=2&sleeps=4")
+all_prices_missing_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?country=ES&city=Barcelona&from=2027-04-02&to=2027-04-09&bedrooms=2&sleeps=4")
 
-priced_only_missing_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-04-02&to=2027-04-09&bedrooms=2&sleeps=4&pricedOnly=true")
+priced_only_missing_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?country=ES&city=Barcelona&from=2027-04-02&to=2027-04-09&bedrooms=2&sleeps=4&pricedOnly=true")
 
 ALL_PRICES_MISSING_JSON="$all_prices_missing_json" PRICED_ONLY_MISSING_JSON="$priced_only_missing_json" python3 - <<'PY'
 import json, os
@@ -618,9 +624,9 @@ sort_property_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"]
 
 curl --fail --silent -X POST "http://localhost:$HTTP_PORT/api/properties/$sort_property_id/availability"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"from":"2027-04-02","to":"2027-04-09","nightlyPriceCents":9000}' >/dev/null
 
-sorted_price_search_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-04-02&to=2027-04-09&bedrooms=2&sleeps=4")
-price_range_search_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-04-02&to=2027-04-09&bedrooms=2&sleeps=4&minPriceCents=62000&maxPriceCents=64000")
-price_range_empty_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-04-02&to=2027-04-09&bedrooms=2&sleeps=4&minPriceCents=64001")
+sorted_price_search_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/search?country=ES&city=Barcelona&from=2027-04-02&to=2027-04-09&bedrooms=2&sleeps=4")
+price_range_search_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/search?country=ES&city=Barcelona&from=2027-04-02&to=2027-04-09&bedrooms=2&sleeps=4&minPriceCents=62000&maxPriceCents=64000")
+price_range_empty_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/search?country=ES&city=Barcelona&from=2027-04-02&to=2027-04-09&bedrooms=2&sleeps=4&minPriceCents=64001")
 
 SORTED_PRICE_SEARCH_JSON="$sorted_price_search_json" PRICE_RANGE_SEARCH_JSON="$price_range_search_json" PRICE_RANGE_EMPTY_JSON="$price_range_empty_json" python3 - "$sort_property_id" "$property_id" <<'PY'
 import json, os, sys
@@ -704,7 +710,7 @@ test "$wrong_listing_delete_status" = "401"
 curl --fail --silent   -X DELETE "http://localhost:$HTTP_PORT/api/listings/$listing_id"   -b "$COOKIE_JAR"   --output /dev/null
 
 after_listing_delete_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/p/$parrot_id")
-after_listing_delete_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?city=Barcelona&from=2027-04-02&to=2027-04-09&bedrooms=2&sleeps=4")
+after_listing_delete_search_json=$(curl --fail --silent   "http://localhost:$HTTP_PORT/api/search?country=ES&city=Barcelona&from=2027-04-02&to=2027-04-09&bedrooms=2&sleeps=4")
 after_listing_delete_dashboard_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/dashboard"   -b "$COOKIE_JAR")
 
 AFTER_LISTING_DELETE_JSON="$after_listing_delete_json" AFTER_LISTING_DELETE_SEARCH_JSON="$after_listing_delete_search_json" AFTER_LISTING_DELETE_DASHBOARD_JSON="$after_listing_delete_dashboard_json" python3 - "$property_id" <<'PY'

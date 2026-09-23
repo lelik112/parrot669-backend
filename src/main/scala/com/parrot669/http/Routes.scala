@@ -258,6 +258,7 @@ final class Routes[F[_]: Async](
       else
         service
           .search(
+            countryCodeRaw = params.getOrElse("country", ""),
             city = params.getOrElse("city", ""),
             fromRaw = params.getOrElse("from", ""),
             toRaw = params.getOrElse("to", ""),
