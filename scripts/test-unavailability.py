@@ -13,7 +13,14 @@ def client(cookie=None):
     jar = http.cookiejar.MozillaCookieJar(cookie)
     if cookie:
         jar.load(ignore_discard=True, ignore_expires=True)
-    return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+    opener = urllib.request.build_opener()
+    # Curl accepts host-only localhost cookies; CookieJar normalizes that host
+    # differently. Send the test session explicitly to our localhost-only server.
+    sessions = [c for c in jar if c.name == "parrot_session"]
+    if cookie:
+        assert len(sessions) == 1, "Expected one smoke-test session"
+        opener.addheaders = [("Cookie", "parrot_session=" + sessions[0].value)]
+    return opener
 
 owner, other, guest = client(owner_cookie), client(other_cookie), client()
 
