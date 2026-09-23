@@ -15,6 +15,30 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
   def health: F[Boolean] =
     sql"select true".query[Boolean].unique.transact(xa)
 
+  def unavailabilityForProperty(propertyId: UUID): F[List[UnavailabilityRecord]] =
+    sql"""select id, property_id, date_from, date_to, created_at
+           from unavailability_periods where property_id = $propertyId
+           order by date_from, date_to, id""".query[UnavailabilityRecord].to[List].transact(xa)
+
+  def unavailabilityOwnerProfileId(id: UUID): F[Option[UUID]] =
+    sql"""select p.profile_id from unavailability_periods u
+           join properties p on p.id = u.property_id where u.id = $id"""
+      .query[UUID].option.transact(xa)
+
+  def createUnavailability(value: UnavailabilityRecord): F[UnavailabilityRecord] =
+    sql"""insert into unavailability_periods (id, property_id, date_from, date_to, created_at)
+           values (${value.id}, ${value.propertyId}, ${value.dateFrom}, ${value.dateTo}, ${value.createdAt})
+           returning id, property_id, date_from, date_to, created_at"""
+      .query[UnavailabilityRecord].unique.transact(xa)
+
+  def updateUnavailability(id: UUID, from: LocalDate, to: LocalDate): F[Option[UnavailabilityRecord]] =
+    sql"""update unavailability_periods set date_from = $from, date_to = $to where id = $id
+           returning id, property_id, date_from, date_to, created_at"""
+      .query[UnavailabilityRecord].option.transact(xa)
+
+  def deleteUnavailability(id: UUID): F[Boolean] =
+    sql"delete from unavailability_periods where id = $id".update.run.map(_ > 0).transact(xa)
+
   def locationCountries: F[List[LocationCountry]] =
     sql"""
       select distinct country_code, country
@@ -206,6 +230,12 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
           and p.sleeps >= $sleeps
           and p.min_stay_days <= $stayDays
           and p.accommodation_type = coalesce($accommodationType, p.accommodation_type)
+          and not exists (
+            select 1 from unavailability_periods u
+            where u.property_id = p.id
+              and u.date_from < $requestedTo
+              and u.date_to > $requestedFrom
+          )
       ),
       nights as (
         select generate_series(

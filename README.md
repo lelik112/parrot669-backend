@@ -1,5 +1,20 @@
 # PARROT 669 backend
 
+## Manual unavailable periods
+
+Owners can create/list `GET|POST /api/properties/:id/unavailability` and edit/delete
+`PUT|DELETE /api/unavailability/:id`. The body is `{ "from": "2030-04-10", "to": "2030-04-15" }`;
+there is no price. The end date is exclusive: April 15 is available again if covered by availability.
+The dashboard returns these periods separately in `unavailability`.
+
+Manual blocks override available periods in search without splitting them or modifying prices.
+They work without listings/calendars and remain independent of calendar synchronization.
+Overlapping manual blocks return 409 (enforced by PostgreSQL even for concurrent writes);
+adjacent blocks and overlaps with available dates are allowed. Only the property's owner can
+manage them. Deleting the property cascades to its blocks. Migration V18 adds the empty table
+without changing existing availability. `scripts/smoke-test.sh` covers CRUD, boundaries,
+authorization, search, preserved prices and concurrent overlap on a disposable database.
+
 Small, deliberately non-magical backend for the first PARROT vertical slice.
 
 The current product model is not “user is verified”. It stores **specific claims proven by specific methods**. The first claim is:

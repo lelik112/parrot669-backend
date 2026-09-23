@@ -740,3 +740,5 @@ data = json.loads(os.environ["AFTER_PROPERTY_DELETE_JSON"])
 assert data["properties"] == [], data
 print("Property deletion passed")
 PY
+
+python3 scripts/test-unavailability.py "http://localhost:$HTTP_PORT" "$COOKIE_JAR" "$OTHER_COOKIE_JAR"

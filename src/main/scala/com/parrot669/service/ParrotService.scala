@@ -445,6 +445,74 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
         }
     }
 
+  private def withPeriodOwner[A](owner: F[Option[UUID]], currentProfileId: UUID)(
+      action: => F[Either[ServiceError, A]]
+  ): F[Either[ServiceError, A]] =
+    owner.flatMap {
+      case Some(profileId) if profileId == currentProfileId => action
+      case _ => fail[A](NotFound("resource not found"))
+    }
+
+  private def toUnavailabilityView(value: UnavailabilityRecord): UnavailabilityView =
+    UnavailabilityView(value.id.toString, value.propertyId.toString,
+      value.dateFrom.toString, value.dateTo.toString, value.createdAt.toString)
+
+  private def validateUnavailability(req: UnavailabilityRequest): Either[ServiceError, (LocalDate, LocalDate)] =
+    for {
+      from <- parseDate(req.from, "from")
+      to <- parseDate(req.to, "to")
+      _ <- Either.cond(to.isAfter(from), (), Invalid("to must be after from; end date is exclusive"))
+    } yield (from, to)
+
+  private def handleUnavailabilityConflict[A](action: F[Either[ServiceError, A]]): F[Either[ServiceError, A]] =
+    action.handleErrorWith {
+      case error: PSQLException if error.getSQLState == "23P01" &&
+          Option(error.getServerErrorMessage).flatMap(e => Option(e.getConstraint))
+            .contains("unavailability_periods_no_overlap") =>
+        fail[A](Conflict("unavailability period overlaps an existing block"))
+      case error => Async[F].raiseError(error)
+    }
+
+  def listUnavailability(propertyId: UUID, currentProfileId: UUID): F[Either[ServiceError, List[UnavailabilityView]]] =
+    withPeriodOwner(repo.propertyOwnerProfileId(propertyId), currentProfileId) {
+      repo.unavailabilityForProperty(propertyId).map(_.map(toUnavailabilityView).asRight[ServiceError])
+    }
+
+  def addUnavailability(propertyId: UUID, currentProfileId: UUID, req: UnavailabilityRequest): F[Either[ServiceError, UnavailabilityView]] =
+    withPeriodOwner(repo.propertyOwnerProfileId(propertyId), currentProfileId) {
+      validateUnavailability(req) match {
+        case Left(error) => fail[UnavailabilityView](error)
+        case Right((from, to)) => handleUnavailabilityConflict {
+          for {
+            id <- uuid
+            createdAt <- now
+            saved <- repo.createUnavailability(UnavailabilityRecord(id, propertyId, from, to, createdAt))
+          } yield toUnavailabilityView(saved).asRight[ServiceError]
+        }
+      }
+    }
+
+  def updateUnavailability(id: UUID, currentProfileId: UUID, req: UnavailabilityRequest): F[Either[ServiceError, UnavailabilityView]] =
+    withPeriodOwner(repo.unavailabilityOwnerProfileId(id), currentProfileId) {
+      validateUnavailability(req) match {
+        case Left(error) => fail[UnavailabilityView](error)
+        case Right((from, to)) => handleUnavailabilityConflict {
+          repo.updateUnavailability(id, from, to).map {
+            case Some(saved) => Right(toUnavailabilityView(saved))
+            case None => Left(NotFound("resource not found"))
+          }
+        }
+      }
+    }
+
+  def deleteUnavailability(id: UUID, currentProfileId: UUID): F[Either[ServiceError, Unit]] =
+    withPeriodOwner(repo.unavailabilityOwnerProfileId(id), currentProfileId) {
+      repo.deleteUnavailability(id).map {
+        case true => Right(())
+        case false => Left(NotFound("resource not found"))
+      }
+    }
+
   def search(
       countryCodeRaw: String,
       city: String,
@@ -831,8 +899,8 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
           case (None, _, _) => fail[HostDashboard](NotFound("profile not found"))
           case (Some(profile), properties, listings) =>
             properties.traverse { property =>
-              (repo.availabilityForProperty(property.id), calendarViewsForProperty(property.id)).mapN {
-                (availability, calendars) =>
+              (repo.availabilityForProperty(property.id), calendarViewsForProperty(property.id), repo.unavailabilityForProperty(property.id)).mapN {
+                (availability, calendars, unavailability) =>
                   HostProperty(
                     id = property.id.toString,
                     title = property.title,
@@ -845,7 +913,8 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
                     createdAt = property.createdAt.toString,
                     listings = listings.filter(_.propertyId == property.id).map(toPublicListing),
                     availability = availability.map(toAvailabilityCreated),
-                    calendars = calendars
+                    calendars = calendars,
+                    unavailability = unavailability.map(toUnavailabilityView)
                   )
               }
             }.map { hostProperties =>

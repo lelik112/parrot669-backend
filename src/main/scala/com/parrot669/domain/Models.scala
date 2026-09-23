@@ -44,6 +44,24 @@ final case class AvailabilityRecord(
     createdAt: OffsetDateTime
 )
 
+final case class UnavailabilityRecord(
+    id: UUID,
+    propertyId: UUID,
+    dateFrom: LocalDate,
+    dateTo: LocalDate,
+    createdAt: OffsetDateTime
+)
+
+final case class UnavailabilityRequest(from: String, to: String)
+
+final case class UnavailabilityView(
+    id: String,
+    propertyId: String,
+    from: String,
+    to: String,
+    createdAt: String
+)
+
 final case class AvailablePropertyRecord(
     propertyId: UUID,
     propertyTitle: String,
@@ -202,7 +220,8 @@ final case class HostProperty(
     createdAt: String,
     listings: List[PublicListing],
     availability: List[AvailabilityCreated],
-    calendars: List[ExternalCalendarView]
+    calendars: List[ExternalCalendarView],
+    unavailability: List[UnavailabilityView]
 )
 
 final case class HostDashboard(

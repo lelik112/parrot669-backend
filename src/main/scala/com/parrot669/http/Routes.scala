@@ -231,6 +231,46 @@ final class Routes[F[_]: Async](
         }
       }
 
+    case request @ GET -> Root / "api" / "properties" / propertyIdRaw / "unavailability" =>
+      authenticated(request) { context =>
+        parseUuid(propertyIdRaw) match {
+          case Left(error) => respondError(error)
+          case Right(propertyId) =>
+            service.listUnavailability(propertyId, context.profileId).flatMap(result => respond(result))
+        }
+      }
+
+    case request @ POST -> Root / "api" / "properties" / propertyIdRaw / "unavailability" =>
+      authenticated(request) { context =>
+        parseUuid(propertyIdRaw) match {
+          case Left(error) => respondError(error)
+          case Right(propertyId) => decode[UnavailabilityRequest](request) { body =>
+            service.addUnavailability(propertyId, context.profileId, body).flatMap(result => respond(result, created = true))
+          }
+        }
+      }
+
+    case request @ PUT -> Root / "api" / "unavailability" / periodIdRaw =>
+      authenticated(request) { context =>
+        parseUuid(periodIdRaw) match {
+          case Left(error) => respondError(error)
+          case Right(id) => decode[UnavailabilityRequest](request) { body =>
+            service.updateUnavailability(id, context.profileId, body).flatMap(result => respond(result))
+          }
+        }
+      }
+
+    case request @ DELETE -> Root / "api" / "unavailability" / periodIdRaw =>
+      authenticated(request) { context =>
+        parseUuid(periodIdRaw) match {
+          case Left(error) => respondError(error)
+          case Right(id) => service.deleteUnavailability(id, context.profileId).flatMap {
+            case Right(_) => NoContent()
+            case Left(error) => respondError(error)
+          }
+        }
+      }
+
     case GET -> Root / "api" / "locations" / "countries" =>
       service.locationCountries.flatMap(Ok(_))
 
