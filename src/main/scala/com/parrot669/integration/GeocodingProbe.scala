@@ -26,9 +26,9 @@ object GeocodingProbe extends IOApp.Simple {
     val check = for {
       key <- IO.fromOption(sys.env.get("GEOAPIFY_API_KEY").filter(_.trim.nonEmpty))(new IllegalStateException)
       _ <- List(
-        ("ES", "Barcelona", List("alf, Barcelona", "Barcelona, alf", "alf, Barcelona, Spain", "alfons el magnanim, Barcelona", "mallor, Barcelona")),
-        ("ES", "Madrid", List("alc, Madrid", "alcala, Madrid")),
-        ("FR", "Paris", List("riv, Paris", "rivoli, Paris"))
+        ("ES", "Barcelona", List("Barcelona, alfons", "Barcelona, alfons el mag", "Barcelona, alfonso el magnanim", "Barcelona, mallor")),
+        ("ES", "Madrid", List("Madrid, alc", "Madrid, alcala")),
+        ("FR", "Paris", List("Paris, riv", "Paris, rivoli"))
       ).traverse_ { case (country, cityName, queries) =>
         for {
           cities <- client.autocomplete(GeocodeQuery(cityName, "city", Some(country)), key)
