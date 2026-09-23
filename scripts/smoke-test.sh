@@ -199,6 +199,25 @@ property_json=$(curl --fail --silent -b "$COOKIE_JAR" \
 
 property_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$property_json")
 
+countries_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/locations/countries")
+COUNTRIES_JSON="$countries_json" python3 - <<'PY'
+import json, os
+data = json.loads(os.environ["COUNTRIES_JSON"])
+assert data == [{"code": "ES", "name": "Spain"}], data
+print("Database-backed country locations passed")
+PY
+
+cities_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/locations/cities?country=es")
+CITIES_JSON="$cities_json" python3 - <<'PY'
+import json, os
+data = json.loads(os.environ["CITIES_JSON"])
+assert data == [{"countryCode": "ES", "name": "Barcelona"}], data
+print("Database-backed city locations passed")
+PY
+
+missing_country_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   "http://localhost:$HTTP_PORT/api/locations/cities")
+test "$missing_country_status" = "400"
+
 curl --fail --silent \
   -X POST "http://localhost:$HTTP_PORT/api/auth/register" \
   -H 'content-type: application/json' \
