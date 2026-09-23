@@ -96,6 +96,7 @@ class GeocodingSuite extends munit.FunSuite {
         selected.bounds.map(_.queryValue)).unsafeRunSync().toOption.get
       assertEquals(found.size, count); assert(found.exists(_.street.contains(expected)))
       assert(found.forall(v => v.resultType.contains("street") && v.houseNumber.isEmpty && v.bounds.isEmpty))
+      assert(found.forall(v => !v.asJson.asObject.get.contains("bounds")))
     }
   }
 
