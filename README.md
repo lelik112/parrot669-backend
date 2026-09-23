@@ -7,7 +7,9 @@ the existing session cookie. The module is isolated in `com.parrot669.messaging`
 hosts explicitly enable new conversations (off by default). See
 [the API contract and lifecycle rules](docs/messaging.md). The frontend connects
 the inbox and host opt-in through its Worker; V22 adds participant blocking across
-all properties. Message email notifications remain a separate next step.
+all properties. V23 adds delayed unread-message emails through the existing Resend
+configuration, with durable retries and recipient preferences. Manage email
+notifications and their language on the Messages page.
 
 ## Owner address autocomplete — LocationIQ
 

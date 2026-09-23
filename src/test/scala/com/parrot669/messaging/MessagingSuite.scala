@@ -1,6 +1,6 @@
 package com.parrot669.messaging
 
-import cats.effect.IO
+import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all._
 import com.parrot669.repo.AuthRepository
@@ -55,7 +55,7 @@ class MessagingSuite extends munit.FunSuite {
       "CREATE TABLE sessions (id UUID PRIMARY KEY, account_id UUID REFERENCES accounts(id), token_hash TEXT, expires_at TIMESTAMPTZ)",
       "CREATE TABLE properties (id UUID PRIMARY KEY, profile_id UUID REFERENCES profiles(id), title VARCHAR(160) NOT NULL)"
     ).traverse_(s => Fragment.const(s).update.run).transact(xa)
-    val migration = List("V21__messaging.sql", "V22__messaging_blocks.sql").map { name =>
+    val migration = List("V21__messaging.sql", "V22__messaging_blocks.sql", "V23__messaging_email_notifications.sql").map { name =>
       val source = scala.io.Source.fromInputStream(getClass.getResourceAsStream("/db/migration/" + name))
       try source.mkString finally source.close()
     }.mkString("\n")
@@ -93,6 +93,13 @@ class MessagingSuite extends munit.FunSuite {
       .unsafeRunSync()
   }
 
+  private def notifications(f: MessagingFixture): EmailNotificationRepository[IO] =
+    new EmailNotificationRepository[IO](f.xa, "PARROT <hello@example.test>", "https://parrot669.com")
+
+  private def makeEmailsDue(f: MessagingFixture): IO[Unit] =
+    sql"update messaging_email_jobs set due_at = clock_timestamp() - interval '1 second' where due_at is not null"
+      .update.run.transact(f.xa).void
+
   private def send(body: String = "Reply", key: String = UUID.randomUUID().toString): SendMessageRequest =
     SendMessageRequest(key, body)
 
@@ -106,6 +113,8 @@ class MessagingSuite extends munit.FunSuite {
           (Method.GET, "/settings", None),
           (Method.PUT, "/settings", Some(MessagingSettings(true).asJson)),
           (Method.GET, "/unread", None),
+          (Method.GET, "/notification-settings", None),
+          (Method.PUT, "/notification-settings", Some(EmailNotificationSettings(false, "ru").asJson)),
           (Method.GET, s"/conversations/for-property/${f.property}", None),
           (Method.PUT, s"/conversations/$id/block", Some(BlockRequest(true).asJson)),
           (Method.GET, "/conversations", None),
@@ -364,6 +373,159 @@ class MessagingSuite extends munit.FunSuite {
         _ <- f.service.setBlocked(id, f.host.id, BlockRequest(false))
         resumed <- f.service.send(id, f.guest.id, send())
         _ = assert(resumed.isRight)
+      } yield ()
+    }
+  }
+
+  test("email preferences are private and independent of host opt-in; validate all supported languages") {
+    withDb { f =>
+      for {
+        initial <- f.request(Method.GET, "/notification-settings", Some(f.guest)).flatMap(_.as[EmailNotificationSettings])
+        _ = assertEquals(initial, EmailNotificationSettings(true, "en"))
+        _ <- f.enable
+        response <- f.request(Method.PUT, "/notification-settings", Some(f.host), Some(EmailNotificationSettings(false, "ru").asJson))
+        _ = assertEquals(response.status, Status.Ok)
+        host <- f.service.settings(f.host.id)
+        _ = assert(host.acceptingNewConversations)
+        _ <- f.service.updateSettings(f.host.id, MessagingSettings(false))
+        retained <- f.service.emailSettings(f.host.id)
+        _ = assertEquals(retained, EmailNotificationSettings(false, "ru"))
+        guest <- f.service.emailSettings(f.guest.id)
+        _ = assertEquals(guest, initial)
+        bad <- f.request(Method.PUT, "/notification-settings", Some(f.host), Some(EmailNotificationSettings(true, "xx").asJson))
+        _ = assertEquals(bad.status, Status.BadRequest)
+        _ <- List("en", "es", "ca", "ru").traverse_ { language =>
+          f.service.updateEmailSettings(f.guest.id, EmailNotificationSettings(true, language)).map(r => assert(r.isRight))
+        }
+      } yield ()
+    }
+  }
+
+  test("outbox is transactional and coalesces message retries/bursts; new arrivals during delivery wait for cooldown") {
+    withDb { f =>
+      val repo = notifications(f)
+      for {
+        _ <- f.enable
+        req = StartConversationRequest(f.property.toString, UUID.randomUUID().toString, "Private message: do not email this")
+        start <- f.service.start(f.guest.id, req).map(_.toOption.get)
+        _ <- f.service.start(f.guest.id, req)
+        id = UUID.fromString(start.conversationId)
+        rows <- sql"select pending_sequence from messaging_email_jobs".query[Int].to[List].transact(f.xa)
+        _ = assertEquals(rows, List(1))
+        early <- repo.claim
+        _ = assertEquals(early, None)
+        _ <- f.service.send(id, f.guest.id, send("Another private message"))
+        _ <- makeEmailsDue(f)
+        claimed <- repo.claim.map(_.get)
+        _ = assertEquals(claimed.recipient, f.host.id)
+        _ = assertEquals(claimed.sequence, 2)
+        _ = assert(!claimed.payload.contains("Private message") && !claimed.payload.contains("private-contact"))
+        _ = assert(!claimed.payload.contains("Guest@example.test"))
+        _ = assert(claimed.payload.contains(start.conversationId))
+        _ <- f.service.send(id, f.guest.id, send())
+        _ <- repo.complete(claimed, sent = true)
+        cooldown <- sql"select due_at >= last_sent_at + interval '15 minutes' from messaging_email_jobs".query[Boolean].unique.transact(f.xa)
+        _ = assert(cooldown)
+        tooSoon <- repo.claim
+        _ = assertEquals(tooSoon, None)
+        _ <- makeEmailsDue(f)
+        next <- repo.claim.map(_.get)
+        _ = assertEquals(next.sequence, 3)
+        _ = assertNotEquals(next.id, claimed.id)
+        _ <- repo.complete(next, sent = true)
+        empty <- repo.claim
+        _ = assertEquals(empty, None)
+        _ <- f.service.send(id, f.host.id, send())
+        _ <- makeEmailsDue(f)
+        reply <- repo.claim.map(_.get)
+        _ = assertEquals(reply.recipient, f.guest.id)
+      } yield ()
+    }
+  }
+
+  for (reason <- List("read", "opt_out", "blocked", "unverified", "deleted")) {
+    test(s"pending email is suppressed when $reason, without contacting the provider") {
+      withDb { f =>
+        for {
+          _ <- f.enable
+          c <- f.start()
+          id = UUID.fromString(c.conversationId)
+          _ <- reason match {
+            case "read" => f.service.markRead(id, f.host.id, MarkReadRequest(1)).void
+            case "opt_out" => f.service.updateEmailSettings(f.host.id, EmailNotificationSettings(false, "en")).void
+            case "blocked" => f.service.setBlocked(id, f.guest.id, BlockRequest(true)).void
+            case "unverified" => sql"update accounts set email_verified = false where id = (select account_id from profiles where id = ${f.host.id})".update.run.transact(f.xa).void
+            case _ => sql"delete from properties where id = ${f.property}".update.run.transact(f.xa).void
+          }
+          _ <- makeEmailsDue(f)
+          sender = new MessageEmailSender[IO] { def send(id: UUID, payload: String): IO[Unit] = IO.raiseError(new AssertionError("Must not email")) }
+          worked <- new EmailNotificationWorker[IO](notifications(f), sender).runOnce
+          _ = assert(!worked)
+          queued <- sql"select count(*) from messaging_email_jobs where due_at is not null".query[Long].unique.transact(f.xa)
+          _ = assertEquals(queued, 0L)
+        } yield ()
+      }
+    }
+  }
+
+  test("provider failure retries the frozen payload/key after backoff and records success without requeueing") {
+    withDb { f =>
+      for {
+        _ <- f.enable
+        _ <- f.start()
+        _ <- makeEmailsDue(f)
+        calls <- Ref.of[IO, List[(UUID, String)]](Nil)
+        sender = new MessageEmailSender[IO] {
+          def send(id: UUID, payload: String): IO[Unit] = calls.modify(list => ((id, payload) :: list, list.isEmpty))
+            .flatMap(first => if (first) IO.raiseError(MessageEmailFailure("resend_transport", true)) else IO.unit)
+        }
+        worker = new EmailNotificationWorker[IO](notifications(f), sender)
+        first <- worker.runOnce
+        _ = assert(first)
+        beforeRetry <- worker.runOnce
+        _ = assert(!beforeRetry)
+        _ <- f.service.updateEmailSettings(f.host.id, EmailNotificationSettings(true, "ru"))
+        _ <- makeEmailsDue(f)
+        retried <- worker.runOnce
+        _ = assert(retried)
+        saved <- calls.get
+        _ = assertEquals(saved.size, 2)
+        _ = assertEquals(saved.head, saved.last)
+        finished <- worker.runOnce
+        _ = assert(!finished)
+        cleared <- sql"select delivery_payload is null and delivery_email is null and last_sent_at is not null from messaging_email_jobs".query[Boolean].unique.transact(f.xa)
+        _ = assert(cleared)
+      } yield ()
+    }
+  }
+
+  test("concurrent workers, stale leases and an expired idempotency window cannot duplicate a delivery") {
+    withDb { f =>
+      val repo = notifications(f)
+      for {
+        _ <- f.enable
+        c <- f.start()
+        _ <- makeEmailsDue(f)
+        pair <- (repo.claim, notifications(f).claim).parTupled
+        winners = List(pair._1, pair._2).flatten
+        _ = assertEquals(winners.size, 1)
+        first = winners.head
+        _ <- sql"update messaging_email_jobs set lease_until = clock_timestamp() - interval '1 second'".update.run.transact(f.xa)
+        recovered <- repo.claim.map(_.get)
+        _ = assertEquals(recovered.id, first.id)
+        _ = assertEquals(recovered.payload, first.payload)
+        _ <- repo.complete(first, sent = true)
+        current <- repo.eligible(recovered)
+        _ = assert(current)
+        _ <- f.service.markRead(UUID.fromString(c.conversationId), f.host.id, MarkReadRequest(1))
+        readSinceClaim <- repo.eligible(recovered)
+        _ = assert(!readSinceClaim)
+        _ <- sql"""update messaging_email_jobs set started_at = clock_timestamp() - interval '24 hours',
+          lease_until = clock_timestamp() - interval '1 second'""".update.run.transact(f.xa)
+        expired <- repo.claim
+        _ = assertEquals(expired, None)
+        reason <- sql"select last_error from messaging_email_jobs".query[String].unique.transact(f.xa)
+        _ = assertEquals(reason, "retry_expired")
       } yield ()
     }
   }
