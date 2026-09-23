@@ -1,5 +1,13 @@
 # PARROT 669 backend
 
+## Internal messaging
+
+Backend-only guest/host conversations are available under `/api/messaging` using
+the existing session cookie. The module is isolated in `com.parrot669.messaging`;
+hosts explicitly enable new conversations (off by default). See
+[the API contract and lifecycle rules](docs/messaging.md). Frontend/Worker wiring
+and message email notifications are a separate next step.
+
 ## Owner address autocomplete
 
 `GET /api/geocode/autocomplete?q=Carrer%20de%20Mallorca%20401%20Barcelona` requires the existing owner session cookie.

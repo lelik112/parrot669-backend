@@ -7,6 +7,7 @@ import com.parrot669.config.AppConfig
 import com.parrot669.db.Database
 import com.parrot669.http.Routes
 import com.parrot669.integration.{GeoapifyClient, HttpIcalFetcher}
+import com.parrot669.messaging.{MessagingRepository, MessagingRoutes, MessagingService}
 import com.parrot669.repo.{AuthRepository, ParrotRepository}
 import com.parrot669.service.{AuthService, EmailSender, EmailVerificationService, GeocodingService, ParrotService, ResendEmailSender}
 import org.http4s.ember.server.EmberServerBuilder
@@ -46,13 +47,14 @@ object Main extends IOApp.Simple {
         emailVerificationService = new EmailVerificationService[IO](authRepo, emailSender)
         authService = new AuthService[IO](authRepo, emailVerificationService)
         geocodingService <- Resource.eval(GeocodingService.create[IO](config.geoapifyApiKey, GeoapifyClient.live[IO]))
+        messaging = new MessagingService[IO](new MessagingRepository[IO](xa))
         routes = new Routes[IO](
           service,
           authService,
           geocodingService,
           config.adminToken,
           secureCookies = config.environment == "prod"
-        ).routes
+        ).routes <+> new MessagingRoutes[IO](messaging, authService).routes
         server <- EmberServerBuilder
           .default[IO]
           .withHost(host)

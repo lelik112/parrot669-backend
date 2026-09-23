@@ -133,6 +133,15 @@ profile_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["profile"][
 parrot_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["profile"]["parrotId"])' <<<"$verify_json")
 
 me_json=$(curl --fail --silent -b "$COOKIE_JAR" "http://localhost:$HTTP_PORT/api/auth/me")
+messaging_settings_json=$(curl --fail --silent -b "$COOKIE_JAR" "http://localhost:$HTTP_PORT/api/messaging/settings")
+messaging_unread_json=$(curl --fail --silent -b "$COOKIE_JAR" "http://localhost:$HTTP_PORT/api/messaging/unread")
+MESSAGING_SETTINGS_JSON="$messaging_settings_json" MESSAGING_UNREAD_JSON="$messaging_unread_json" python3 - <<'PY'
+import json, os
+assert json.loads(os.environ["MESSAGING_SETTINGS_JSON"]) == {"acceptingNewConversations": False}
+assert json.loads(os.environ["MESSAGING_UNREAD_JSON"]) == {"conversations": 0, "messages": 0}
+print("Isolated messaging routes are composed into the authenticated application")
+PY
+
 ME_JSON="$me_json" python3 - "$profile_id" <<'PY'
 import json, os, sys
 data = json.loads(os.environ["ME_JSON"])
