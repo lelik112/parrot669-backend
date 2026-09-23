@@ -284,5 +284,8 @@ final case class VerificationCreated(
     expiresAt: Option[String]
 )
 
+final case class LocationCountry(code: String, name: String)
+final case class LocationCity(countryCode: String, name: String)
+
 final case class ErrorResponse(error: String)
 final case class HealthResponse(ok: Boolean)
