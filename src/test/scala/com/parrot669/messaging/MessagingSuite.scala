@@ -55,8 +55,10 @@ class MessagingSuite extends munit.FunSuite {
       "CREATE TABLE sessions (id UUID PRIMARY KEY, account_id UUID REFERENCES accounts(id), token_hash TEXT, expires_at TIMESTAMPTZ)",
       "CREATE TABLE properties (id UUID PRIMARY KEY, profile_id UUID REFERENCES profiles(id), title VARCHAR(160) NOT NULL)"
     ).traverse_(s => Fragment.const(s).update.run).transact(xa)
-    val source = scala.io.Source.fromInputStream(getClass.getResourceAsStream("/db/migration/V21__messaging.sql"))
-    val migration = try source.mkString finally source.close()
+    val migration = List("V21__messaging.sql", "V22__messaging_blocks.sql").map { name =>
+      val source = scala.io.Source.fromInputStream(getClass.getResourceAsStream("/db/migration/" + name))
+      try source.mkString finally source.close()
+    }.mkString("\n")
     val migrate = FC.raw { connection =>
       val statement = connection.createStatement()
       try { statement.execute(migration); () } finally statement.close()
@@ -104,6 +106,8 @@ class MessagingSuite extends munit.FunSuite {
           (Method.GET, "/settings", None),
           (Method.PUT, "/settings", Some(MessagingSettings(true).asJson)),
           (Method.GET, "/unread", None),
+          (Method.GET, s"/conversations/for-property/${f.property}", None),
+          (Method.PUT, s"/conversations/$id/block", Some(BlockRequest(true).asJson)),
           (Method.GET, "/conversations", None),
           (Method.POST, "/conversations", Some(StartConversationRequest(f.property.toString, UUID.randomUUID().toString, "Hello").asJson)),
           (Method.GET, s"/conversations/$id", None),
@@ -330,4 +334,38 @@ class MessagingSuite extends munit.FunSuite {
       } yield ()
     }
   }
+  test("blocking is participant-only, applies across properties, and only its author can remove it") {
+    withDb { f =>
+      for {
+        _ <- f.enable
+        c <- f.start()
+        id = UUID.fromString(c.conversationId)
+        found <- f.service.forProperty(f.property, f.guest.id)
+        _ = assertEquals(found.map(_.id), Some(c.conversationId))
+        notFound <- f.service.forProperty(f.property, f.stranger.id)
+        _ = assertEquals(notFound, None)
+        forbidden <- f.request(Method.PUT, s"/conversations/$id/block", Some(f.stranger), Some(BlockRequest(true).asJson))
+        _ = assertEquals(forbidden.status, Status.NotFound)
+        _ <- (f.service.send(id, f.guest.id, send()), f.service.setBlocked(id, f.host.id, BlockRequest(true))).parTupled
+        hostView <- f.service.detail(id, f.host.id).map(_.toOption.get)
+        guestView <- f.service.detail(id, f.guest.id).map(_.toOption.get)
+        _ = assert(hostView.blockedByMe && !hostView.canReply)
+        _ = assert(guestView.blockedByOther && !guestView.canReply)
+        _ <- f.service.setBlocked(id, f.guest.id, BlockRequest(false))
+        afterBlock <- f.service.send(id, f.guest.id, send())
+        _ = assert(afterBlock.left.toOption.exists(_.isInstanceOf[ServiceError.Conflict]))
+        another <- f.propertyFor()
+        throughOtherProperty <- f.service.start(f.guest.id, StartConversationRequest(another.toString, UUID.randomUUID().toString, "Bypass"))
+        _ = assert(throughOtherProperty.left.toOption.exists(_.isInstanceOf[ServiceError.Conflict]))
+        count <- sql"select count(*) from messaging_conversations".query[Long].unique.transact(f.xa)
+        _ = assertEquals(count, 1L)
+        history <- f.service.messages(id, f.host.id, 0, 50)
+        _ = assert(history.toOption.get.items.nonEmpty)
+        _ <- f.service.setBlocked(id, f.host.id, BlockRequest(false))
+        resumed <- f.service.send(id, f.guest.id, send())
+        _ = assert(resumed.isRight)
+      } yield ()
+    }
+  }
+
 }

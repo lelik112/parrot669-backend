@@ -81,6 +81,9 @@ final class MessagingService[F[_]: Async](repo: MessagingRepository[F]) {
     }
 
   def detail(id: UUID, actor: UUID): F[Either[ServiceError, ConversationView]] = repo.detail(id, actor)
+  def forProperty(id: UUID, actor: UUID): F[Option[ConversationView]] = repo.forProperty(id, actor)
+  def setBlocked(id: UUID, actor: UUID, req: BlockRequest): F[Either[ServiceError, BlockRequest]] =
+    repo.setBlocked(id, actor, req.blocked)
 
   def messages(id: UUID, actor: UUID, after: Int, limit: Int): F[Either[ServiceError, MessagePage]] =
     run(validLimit(limit) *> Either.cond(after >= 0, (), Invalid("afterSequence must be nonnegative"))) {

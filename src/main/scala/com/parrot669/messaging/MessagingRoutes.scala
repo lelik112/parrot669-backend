@@ -77,6 +77,13 @@ final class MessagingRoutes[F[_]: Async](service: MessagingService[F], auth: Aut
     case req @ GET -> Root / "api" / "messaging" / "conversations" / raw =>
       authenticated(req)(ctx => withId(raw)(service.detail(_, ctx.profileId).flatMap(respond(_))))
 
+    case req @ GET -> Root / "api" / "messaging" / "conversations" / "for-property" / raw =>
+      authenticated(req)(ctx => withId(raw)(service.forProperty(_, ctx.profileId).flatMap(Ok(_))))
+
+    case req @ PUT -> Root / "api" / "messaging" / "conversations" / raw / "block" =>
+      authenticated(req)(ctx => withId(raw)(id => decode[BlockRequest](req)(value =>
+        service.setBlocked(id, ctx.profileId, value).flatMap(respond(_)))))
+
     case req @ GET -> Root / "api" / "messaging" / "conversations" / raw / "messages" =>
       authenticated(req)(ctx => withId(raw) { id =>
         (integer(req, "afterSequence", 0), integer(req, "limit", 50)).tupled.fold(error, {
