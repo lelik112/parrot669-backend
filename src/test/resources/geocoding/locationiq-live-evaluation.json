@@ -1,0 +1,1077 @@
+[
+  {
+    "city": "Barcelona",
+    "country": "es",
+    "query": "Barcelona",
+    "layer": "city",
+    "viewbox": null,
+    "language": "native",
+    "status": 200,
+    "results": [
+      {
+        "place_id": "323126006243",
+        "osm_id": "347950",
+        "osm_type": "relation",
+        "lat": "41.3825802",
+        "lon": "2.177073",
+        "boundingbox": [
+          "41.3170353",
+          "41.4679135",
+          "2.0524977",
+          "2.2283555"
+        ],
+        "class": "place",
+        "type": "city",
+        "display_name": "Barcelona, Barcelonès, Catalunya, España",
+        "display_place": "Barcelona",
+        "display_address": "Barcelonès, Catalunya, España",
+        "address": {
+          "name": "Barcelona",
+          "city": "Barcelona",
+          "state": "Catalunya",
+          "country": "España",
+          "country_code": "es"
+        }
+      }
+    ]
+  },
+  {
+    "city": "Barcelona",
+    "country": "es",
+    "query": "Barcelona, alf",
+    "layer": "road",
+    "viewbox": "2.0524977,41.3170353,2.2283555,41.4679135",
+    "language": "native",
+    "status": 200,
+    "results": [
+      {
+        "place_id": "322727849085",
+        "osm_id": "292152837",
+        "osm_type": "way",
+        "lat": "41.4374379",
+        "lon": "2.204957",
+        "boundingbox": [
+          "41.4362013",
+          "41.4384631",
+          "2.2047351",
+          "2.205216"
+        ],
+        "class": "highway",
+        "type": "residential",
+        "display_name": "Carrer d'Alfarràs, el Bon Pastor, Sant Andreu, Barcelona, Barcelonès, Catalunya, 08923, España",
+        "display_place": "Carrer d'Alfarràs",
+        "display_address": "el Bon Pastor, Sant Andreu, Barcelona, Barcelonès, Catalunya, 08923, España",
+        "address": {
+          "name": "Carrer d'Alfarràs",
+          "city": "Barcelona",
+          "suburb": "Sant Andreu",
+          "state": "Catalunya",
+          "country": "España",
+          "country_code": "es"
+        }
+      },
+      {
+        "place_id": "321076695061",
+        "osm_id": "34038367",
+        "osm_type": "way",
+        "lat": "41.3868953",
+        "lon": "2.1123589",
+        "boundingbox": [
+          "41.3861204",
+          "41.3870562",
+          "2.1122851",
+          "2.1127143"
+        ],
+        "class": "highway",
+        "type": "residential",
+        "display_name": "Carrer d'Alfambra, Pedralbes, les Corts, Barcelona, Barcelonès, Catalunya, 08034, España",
+        "display_place": "Carrer d'Alfambra",
+        "display_address": "Pedralbes, les Corts, Barcelona, Barcelonès, Catalunya, 08034, España",
+        "address": {
+          "name": "Carrer d'Alfambra",
+          "city": "Barcelona",
+          "suburb": "les Corts",
+          "state": "Catalunya",
+          "country": "España",
+          "country_code": "es"
+        }
+      },
+      {
+        "place_id": "324027279058",
+        "osm_id": "49844253",
+        "osm_type": "way",
+        "lat": "41.3987469",
+        "lon": "2.1493103",
+        "boundingbox": [
+          "41.3968484",
+          "41.4003163",
+          "2.147493",
+          "2.1507527"
+        ],
+        "class": "highway",
+        "type": "residential",
+        "display_name": "Carrer d'Alfons XII, Galvany, Gràcia, Barcelona, Barcelonès, Catalunya, 08006, España",
+        "display_place": "Carrer d'Alfons XII",
+        "display_address": "Galvany, Gràcia, Barcelona, Barcelonès, Catalunya, 08006, España",
+        "address": {
+          "name": "Carrer d'Alfons XII",
+          "city": "Barcelona",
+          "suburb": "Gràcia",
+          "state": "Catalunya",
+          "country": "España",
+          "country_code": "es"
+        }
+      },
+      {
+        "place_id": "320481638112",
+        "osm_id": "1198649231",
+        "osm_type": "way",
+        "lat": "41.4122157",
+        "lon": "2.1648052",
+        "boundingbox": [
+          "41.4121249",
+          "41.4123479",
+          "2.1644595",
+          "2.1648052"
+        ],
+        "class": "highway",
+        "type": "pedestrian",
+        "display_name": "Plaça d'Alfons X, el Baix Guinardó, Horta-Guinardó, Barcelona, Barcelonès, Catalunya, 08024, España",
+        "display_place": "Plaça d'Alfons X",
+        "display_address": "el Baix Guinardó, Horta-Guinardó, Barcelona, Barcelonès, Catalunya, 08024, España",
+        "address": {
+          "name": "Plaça d'Alfons X",
+          "city": "Barcelona",
+          "suburb": "Horta-Guinardó",
+          "state": "Catalunya",
+          "country": "España",
+          "country_code": "es"
+        }
+      },
+      {
+        "place_id": "321508840749",
+        "osm_id": "123189756",
+        "osm_type": "way",
+        "lat": "41.41458",
+        "lon": "2.1382442",
+        "boundingbox": [
+          "41.4143771",
+          "41.4148825",
+          "2.1379733",
+          "2.1383809"
+        ],
+        "class": "highway",
+        "type": "tertiary",
+        "display_name": "Plaça d'Alfonso Comín, els Penitents, Barcelona, Barcelonès, Catalunya, 08023, España",
+        "display_place": "Plaça d'Alfonso Comín",
+        "display_address": "els Penitents, Barcelona, Barcelonès, Catalunya, 08023, España",
+        "address": {
+          "name": "Plaça d'Alfonso Comín",
+          "city": "Barcelona",
+          "state": "Catalunya",
+          "country": "España",
+          "country_code": "es"
+        }
+      },
+      {
+        "place_id": "321297467203",
+        "osm_id": "729397982",
+        "osm_type": "way",
+        "lat": "41.4385378",
+        "lon": "2.204719",
+        "boundingbox": [
+          "41.4384631",
+          "41.438671",
+          "2.2046903",
+          "2.2047351"
+        ],
+        "class": "highway",
+        "type": "pedestrian",
+        "display_name": "Carrer d'Alfarràs, el Bon Pastor, Sant Andreu, Barcelona, Barcelonès, Catalunya, 08922, España",
+        "display_place": "Carrer d'Alfarràs",
+        "display_address": "el Bon Pastor, Sant Andreu, Barcelona, Barcelonès, Catalunya, 08922, España",
+        "address": {
+          "name": "Carrer d'Alfarràs",
+          "city": "Barcelona",
+          "suburb": "Sant Andreu",
+          "state": "Catalunya",
+          "country": "España",
+          "country_code": "es"
+        }
+      },
+      {
+        "place_id": "321209898040",
+        "osm_id": "4747123",
+        "osm_type": "way",
+        "lat": "41.4180946",
+        "lon": "2.2124699",
+        "boundingbox": [
+          "41.4168599",
+          "41.4194662",
+          "2.2106756",
+          "2.2141248"
+        ],
+        "class": "highway",
+        "type": "residential",
+        "display_name": "Carrer d'Alfons el Magnànim, el Besòs i el Maresme, Sant Martí, Barcelona, Barcelonès, Catalunya, 08019, España",
+        "display_place": "Carrer d'Alfons el Magnànim",
+        "display_address": "el Besòs i el Maresme, Sant Martí, Barcelona, Barcelonès, Catalunya, 08019, España",
+        "address": {
+          "name": "Carrer d'Alfons el Magnànim",
+          "city": "Barcelona",
+          "suburb": "Sant Martí",
+          "state": "Catalunya",
+          "country": "España",
+          "country_code": "es"
+        }
+      },
+      {
+        "place_id": "320181864125",
+        "osm_id": "40020874",
+        "osm_type": "way",
+        "lat": "41.4372114",
+        "lon": "2.1738231",
+        "boundingbox": [
+          "41.4367771",
+          "41.4372605",
+          "2.1736917",
+          "2.1749994"
+        ],
+        "class": "highway",
+        "type": "residential",
+        "display_name": "Plaça dels Jardins d'Alfàbia, Porta, Nou Barris, Barcelona, Barcelonès, Catalunya, 08016, España",
+        "display_place": "Plaça dels Jardins d'Alfàbia",
+        "display_address": "Porta, Nou Barris, Barcelona, Barcelonès, Catalunya, 08016, España",
+        "address": {
+          "name": "Plaça dels Jardins d'Alfàbia",
+          "city": "Barcelona",
+          "suburb": "Nou Barris",
+          "state": "Catalunya",
+          "country": "España",
+          "country_code": "es"
+        }
+      },
+      {
+        "place_id": "322424930805",
+        "osm_id": "435337596",
+        "osm_type": "way",
+        "lat": "41.4139844",
+        "lon": "2.2185048",
+        "boundingbox": [
+          "41.4138153",
+          "41.4142681",
+          "2.2182774",
+          "2.2188863"
+        ],
+        "class": "highway",
+        "type": "pedestrian",
+        "display_name": "Carrer del Mestre Alfonso, el Besòs i el Maresme, Sant Martí, Barcelona, Barcelonès, Catalunya, 08019, España",
+        "display_place": "Carrer del Mestre Alfonso",
+        "display_address": "el Besòs i el Maresme, Sant Martí, Barcelona, Barcelonès, Catalunya, 08019, España",
+        "address": {
+          "name": "Carrer del Mestre Alfonso",
+          "city": "Barcelona",
+          "suburb": "Sant Martí",
+          "state": "Catalunya",
+          "country": "España",
+          "country_code": "es"
+        }
+      },
+      {
+        "place_id": "323590288789",
+        "osm_id": "887666570",
+        "osm_type": "way",
+        "lat": "41.4155",
+        "lon": "2.1359762",
+        "boundingbox": [
+          "41.4153631",
+          "41.4158273",
+          "2.1359636",
+          "2.1360464"
+        ],
+        "class": "highway",
+        "type": "footway",
+        "display_name": "Plaça d'Alfonso Comín, la Bonanova, Barcelona, Barcelonès, Catalunya, 08022, España",
+        "display_place": "Plaça d'Alfonso Comín",
+        "display_address": "la Bonanova, Barcelona, Barcelonès, Catalunya, 08022, España",
+        "address": {
+          "name": "Plaça d'Alfonso Comín",
+          "city": "Barcelona",
+          "state": "Catalunya",
+          "country": "España",
+          "country_code": "es"
+        }
+      }
+    ]
+  },
+  {
+    "city": "Barcelona",
+    "country": "es",
+    "query": "Barcelona, alfonso el magnanim",
+    "layer": "road",
+    "viewbox": "2.0524977,41.3170353,2.2283555,41.4679135",
+    "language": "native",
+    "status": 200,
+    "results": [
+      {
+        "place_id": "321209898040",
+        "osm_id": "445818359",
+        "osm_type": "way",
+        "lat": "41.4150166",
+        "lon": "2.2164504",
+        "boundingbox": [
+          "41.4134144",
+          "41.4166318",
+          "2.2143234",
+          "2.2186208"
+        ],
+        "class": "highway",
+        "type": "residential",
+        "display_name": "Carrer d'Alfons el Magnànim, el Besòs i el Maresme, Sant Martí, Barcelona, Barcelonès, Catalunya, 08019, España",
+        "display_place": "Carrer d'Alfons el Magnànim",
+        "display_address": "el Besòs i el Maresme, Sant Martí, Barcelona, Barcelonès, Catalunya, 08019, España",
+        "address": {
+          "name": "Carrer d'Alfons el Magnànim",
+          "city": "Barcelona",
+          "suburb": "Sant Martí",
+          "state": "Catalunya",
+          "country": "España",
+          "country_code": "es"
+        }
+      }
+    ]
+  },
+  {
+    "city": "Madrid",
+    "country": "es",
+    "query": "Madrid",
+    "layer": "city",
+    "viewbox": null,
+    "language": "native",
+    "status": 200,
+    "results": [
+      {
+        "place_id": "321478791873",
+        "osm_id": "5326784",
+        "osm_type": "relation",
+        "lat": "40.416782",
+        "lon": "-3.703507",
+        "boundingbox": [
+          "40.3119774",
+          "40.6437293",
+          "-3.8889539",
+          "-3.5179163"
+        ],
+        "class": "place",
+        "type": "city",
+        "display_name": "Madrid, Comunidad de Madrid, España",
+        "display_place": "Madrid",
+        "display_address": "Comunidad de Madrid, España",
+        "address": {
+          "name": "Madrid",
+          "city": "Madrid",
+          "state": "Comunidad de Madrid",
+          "country": "España",
+          "country_code": "es"
+        }
+      },
+      {
+        "place_id": "321325553725",
+        "osm_id": "343285",
+        "osm_type": "relation",
+        "lat": "40.4933095",
+        "lon": "-3.8758396",
+        "boundingbox": [
+          "40.4750246",
+          "40.5746026",
+          "-3.9498884",
+          "-3.8331637"
+        ],
+        "class": "place",
+        "type": "town",
+        "display_name": "Las Rozas de Madrid, Comunidad de Madrid, España",
+        "display_place": "Las Rozas de Madrid",
+        "display_address": "Comunidad de Madrid, España",
+        "address": {
+          "name": "Las Rozas de Madrid",
+          "city": "Las Rozas de Madrid",
+          "state": "Comunidad de Madrid",
+          "country": "España",
+          "country_code": "es"
+        }
+      },
+      {
+        "place_id": "320859102567",
+        "osm_id": "346079",
+        "osm_type": "relation",
+        "lat": "40.2508847",
+        "lon": "-3.8270997",
+        "boundingbox": [
+          "40.2270838",
+          "40.2774525",
+          "-3.8533945",
+          "-3.7963871"
+        ],
+        "class": "place",
+        "type": "town",
+        "display_name": "Humanes de Madrid, Comunidad de Madrid, España",
+        "display_place": "Humanes de Madrid",
+        "display_address": "Comunidad de Madrid, España",
+        "address": {
+          "name": "Humanes de Madrid",
+          "city": "Humanes de Madrid",
+          "state": "Comunidad de Madrid",
+          "country": "España",
+          "country_code": "es"
+        }
+      },
+      {
+        "place_id": "322191294794",
+        "osm_id": "343826",
+        "osm_type": "relation",
+        "lat": "41.4803445",
+        "lon": "-5.6040598",
+        "boundingbox": [
+          "41.4291256",
+          "41.4880783",
+          "-5.6451498",
+          "-5.5400174"
+        ],
+        "class": "place",
+        "type": "village",
+        "display_name": "Madridanos, Zamora, Castilla y León, 49157, España",
+        "display_place": "Madridanos",
+        "display_address": "Zamora, Castilla y León, 49157, España",
+        "address": {
+          "name": "Madridanos",
+          "city": "Madridanos",
+          "state": "Castilla y León",
+          "country": "España",
+          "country_code": "es"
+        }
+      },
+      {
+        "place_id": "321158877155",
+        "osm_id": "342223",
+        "osm_type": "relation",
+        "lat": "39.4697204",
+        "lon": "-3.5353737",
+        "boundingbox": [
+          "39.2993269",
+          "39.5940943",
+          "-3.6116928",
+          "-3.4179019"
+        ],
+        "class": "place",
+        "type": "town",
+        "display_name": "Madridejos, Toledo, Castilla-La Mancha, 45710, España",
+        "display_place": "Madridejos",
+        "display_address": "Toledo, Castilla-La Mancha, 45710, España",
+        "address": {
+          "name": "Madridejos",
+          "city": "Madridejos",
+          "state": "Castilla-La Mancha",
+          "country": "España",
+          "country_code": "es"
+        }
+      }
+    ]
+  },
+  {
+    "city": "Madrid",
+    "country": "es",
+    "query": "Madrid, alc",
+    "layer": "road",
+    "viewbox": "-3.8889539,40.3119774,-3.5179163,40.6437293",
+    "language": "native",
+    "status": 200,
+    "results": [
+      {
+        "place_id": "323588382185",
+        "osm_id": "479304570",
+        "osm_type": "way",
+        "lat": "40.4012552",
+        "lon": "-3.5487297",
+        "boundingbox": [
+          "40.4011586",
+          "40.4012552",
+          "-3.5487297",
+          "-3.5487286"
+        ],
+        "class": "highway",
+        "type": "secondary",
+        "display_name": "Calle del Alcalde Andrés Madrid Dávila, El Cañaveral, Vicálvaro, Madrid, Comunidad de Madrid, 28052, España",
+        "display_place": "Calle del Alcalde Andrés Madrid Dávila",
+        "display_address": "El Cañaveral, Vicálvaro, Madrid, Comunidad de Madrid, 28052, España",
+        "address": {
+          "name": "Calle del Alcalde Andrés Madrid Dávila",
+          "city": "Madrid",
+          "suburb": "Vicálvaro",
+          "state": "Comunidad de Madrid",
+          "country": "España",
+          "country_code": "es"
+        }
+      },
+      {
+        "place_id": "324203128870",
+        "osm_id": "1381255637",
+        "osm_type": "way",
+        "lat": "40.3953682",
+        "lon": "-3.7400859",
+        "boundingbox": [
+          "40.3952085",
+          "40.3955026",
+          "-3.7405049",
+          "-3.7397198"
+        ],
+        "class": "highway",
+        "type": "residential",
+        "display_name": "Calle Alcaraván, Cármenes, Latina, Madrid, Comunidad de Madrid, 28047, España",
+        "display_place": "Calle Alcaraván",
+        "display_address": "Cármenes, Latina, Madrid, Comunidad de Madrid, 28047, España",
+        "address": {
+          "name": "Calle Alcaraván",
+          "city": "Madrid",
+          "suburb": "Latina",
+          "state": "Comunidad de Madrid",
+          "country": "España",
+          "country_code": "es"
+        }
+      },
+      {
+        "place_id": "323799310598",
+        "osm_id": "14431640",
+        "osm_type": "way",
+        "lat": "40.4730453",
+        "lon": "-3.6903602",
+        "boundingbox": [
+          "40.4724004",
+          "40.4732462",
+          "-3.6907558",
+          "-3.6902775"
+        ],
+        "class": "highway",
+        "type": "residential",
+        "display_name": "Calle de Alcolea, Almenara, Tetuán, Madrid, Comunidad de Madrid, 28029, España",
+        "display_place": "Calle de Alcolea",
+        "display_address": "Almenara, Tetuán, Madrid, Comunidad de Madrid, 28029, España",
+        "address": {
+          "name": "Calle de Alcolea",
+          "city": "Madrid",
+          "suburb": "Tetuán",
+          "state": "Comunidad de Madrid",
+          "country": "España",
+          "country_code": "es"
+        }
+      },
+      {
+        "place_id": "323834578515",
+        "osm_id": "23109186",
+        "osm_type": "way",
+        "lat": "40.4704607",
+        "lon": "-3.5887075",
+        "boundingbox": [
+          "40.4696204",
+          "40.4713929",
+          "-3.5887175",
+          "-3.5886924"
+        ],
+        "class": "highway",
+        "type": "residential",
+        "display_name": "Calle de Alcañiz, Barajas, Madrid, Comunidad de Madrid, 28042, España",
+        "display_place": "Calle de Alcañiz",
+        "display_address": "Barajas, Madrid, Comunidad de Madrid, 28042, España",
+        "address": {
+          "name": "Calle de Alcañiz",
+          "city": "Madrid",
+          "suburb": "Barajas",
+          "state": "Comunidad de Madrid",
+          "country": "España",
+          "country_code": "es"
+        }
+      },
+      {
+        "place_id": "322623418155",
+        "osm_id": "29975021",
+        "osm_type": "way",
+        "lat": "40.4211921",
+        "lon": "-3.6839027",
+        "boundingbox": [
+          "40.4209928",
+          "40.4215152",
+          "-3.6845125",
+          "-3.6831677"
+        ],
+        "class": "highway",
+        "type": "residential",
+        "display_name": "Calle de Alcalá, Recoletos, Salamanca, Madrid, Comunidad de Madrid, 28009, España",
+        "display_place": "Calle de Alcalá",
+        "display_address": "Recoletos, Salamanca, Madrid, Comunidad de Madrid, 28009, España",
+        "address": {
+          "name": "Calle de Alcalá",
+          "city": "Madrid",
+          "suburb": "Salamanca",
+          "state": "Comunidad de Madrid",
+          "country": "España",
+          "country_code": "es"
+        }
+      },
+      {
+        "place_id": "321103159378",
+        "osm_id": "262609370",
+        "osm_type": "way",
+        "lat": "40.4273283",
+        "lon": "-3.6739009",
+        "boundingbox": [
+          "40.4255236",
+          "40.4298115",
+          "-3.6740557",
+          "-3.6736878"
+        ],
+        "class": "highway",
+        "type": "residential",
+        "display_name": "Calle Alcántara, Goya, Salamanca, Madrid, Comunidad de Madrid, 28006, España",
+        "display_place": "Calle Alcántara",
+        "display_address": "Goya, Salamanca, Madrid, Comunidad de Madrid, 28006, España",
+        "address": {
+          "name": "Calle Alcántara",
+          "city": "Madrid",
+          "suburb": "Salamanca",
+          "state": "Comunidad de Madrid",
+          "country": "España",
+          "country_code": "es"
+        }
+      },
+      {
+        "place_id": "323671546606",
+        "osm_id": "7648234",
+        "osm_type": "way",
+        "lat": "40.394611",
+        "lon": "-3.7346257",
+        "boundingbox": [
+          "40.3936947",
+          "40.3952217",
+          "-3.7356182",
+          "-3.7339323"
+        ],
+        "class": "highway",
+        "type": "residential",
+        "display_name": "Calle de Alción, San Isidro, Carabanchel, Madrid, Comunidad de Madrid, 28019, España",
+        "display_place": "Calle de Alción",
+        "display_address": "San Isidro, Carabanchel, Madrid, Comunidad de Madrid, 28019, España",
+        "address": {
+          "name": "Calle de Alción",
+          "city": "Madrid",
+          "suburb": "Carabanchel",
+          "state": "Comunidad de Madrid",
+          "country": "España",
+          "country_code": "es"
+        }
+      },
+      {
+        "place_id": "323007176181",
+        "osm_id": "20611932",
+        "osm_type": "way",
+        "lat": "40.4630723",
+        "lon": "-3.6385473",
+        "boundingbox": [
+          "40.4630055",
+          "40.4632066",
+          "-3.6386523",
+          "-3.638485"
+        ],
+        "class": "highway",
+        "type": "residential",
+        "display_name": "Calle de Alcorisa, Canillas, Hortaleza, Madrid, Comunidad de Madrid, 28043, España",
+        "display_place": "Calle de Alcorisa",
+        "display_address": "Canillas, Hortaleza, Madrid, Comunidad de Madrid, 28043, España",
+        "address": {
+          "name": "Calle de Alcorisa",
+          "city": "Madrid",
+          "suburb": "Hortaleza",
+          "state": "Comunidad de Madrid",
+          "country": "España",
+          "country_code": "es"
+        }
+      }
+    ]
+  },
+  {
+    "city": "Paris",
+    "country": "fr",
+    "query": "Paris",
+    "layer": "city",
+    "viewbox": null,
+    "language": "native",
+    "status": 200,
+    "results": [
+      {
+        "place_id": "324274684956",
+        "osm_id": "71525",
+        "osm_type": "relation",
+        "lat": "48.8534951",
+        "lon": "2.3483915",
+        "boundingbox": [
+          "48.8155755",
+          "48.902156",
+          "2.224122",
+          "2.4697602"
+        ],
+        "class": "place",
+        "type": "city",
+        "display_name": "Paris, Île-de-France, France",
+        "display_place": "Paris",
+        "display_address": "Île-de-France, France",
+        "address": {
+          "name": "Paris",
+          "city": "Paris",
+          "state": "Île-de-France",
+          "country": "France",
+          "country_code": "fr"
+        }
+      },
+      {
+        "place_id": "322470736673",
+        "osm_id": "135670",
+        "osm_type": "relation",
+        "lat": "43.7987",
+        "lon": "1.83178",
+        "boundingbox": [
+          "43.7591236",
+          "43.8343619",
+          "1.7850396",
+          "1.8747248"
+        ],
+        "class": "place",
+        "type": "village",
+        "display_name": "Parisot, Tarn, Occitanie, 81310, France",
+        "display_place": "Parisot",
+        "display_address": "Tarn, Occitanie, 81310, France",
+        "address": {
+          "name": "Parisot",
+          "city": "Parisot",
+          "state": "Occitanie",
+          "country": "France",
+          "country_code": "fr"
+        }
+      },
+      {
+        "place_id": "323074070577",
+        "osm_id": "2706247",
+        "osm_type": "relation",
+        "lat": "46.9150284",
+        "lon": "4.6330226",
+        "boundingbox": [
+          "46.901155",
+          "46.9241075",
+          "4.628388",
+          "4.6516941"
+        ],
+        "class": "place",
+        "type": "village",
+        "display_name": "Paris-l'Hôpital, Saône-et-Loire, Bourgogne-Franche-Comté, 71150, France",
+        "display_place": "Paris-l'Hôpital",
+        "display_address": "Saône-et-Loire, Bourgogne-Franche-Comté, 71150, France",
+        "address": {
+          "name": "Paris-l'Hôpital",
+          "city": "Paris-l'Hôpital",
+          "state": "Bourgogne-Franche-Comté",
+          "country": "France",
+          "country_code": "fr"
+        }
+      },
+      {
+        "place_id": "320189041579",
+        "osm_id": "144971",
+        "osm_type": "relation",
+        "lat": "44.2648025",
+        "lon": "1.8570552",
+        "boundingbox": [
+          "44.2293377",
+          "44.2922814",
+          "1.8197238",
+          "1.9164761"
+        ],
+        "class": "place",
+        "type": "village",
+        "display_name": "Parisot, Tarn-et-Garonne, Occitanie, 82160, France",
+        "display_place": "Parisot",
+        "display_address": "Tarn-et-Garonne, Occitanie, 82160, France",
+        "address": {
+          "name": "Parisot",
+          "city": "Parisot",
+          "state": "Occitanie",
+          "country": "France",
+          "country_code": "fr"
+        }
+      },
+      {
+        "place_id": "321294502004",
+        "osm_id": "2095264",
+        "osm_type": "relation",
+        "lat": "50.5200083",
+        "lon": "1.5864532",
+        "boundingbox": [
+          "50.483522",
+          "50.5402483",
+          "1.5761355",
+          "1.6348844"
+        ],
+        "class": "place",
+        "type": "village",
+        "display_name": "Le Touquet-Paris-Plage, Pas-de-Calais, Hauts-de-France, 62520, France",
+        "display_place": "Le Touquet-Paris-Plage",
+        "display_address": "Pas-de-Calais, Hauts-de-France, 62520, France",
+        "address": {
+          "name": "Le Touquet-Paris-Plage",
+          "city": "Le Touquet-Paris-Plage",
+          "state": "Hauts-de-France",
+          "country": "France",
+          "country_code": "fr"
+        }
+      },
+      {
+        "place_id": "321043583952",
+        "osm_id": "191039",
+        "osm_type": "relation",
+        "lat": "45.1790768",
+        "lon": "5.6899617",
+        "boundingbox": [
+          "45.1534916",
+          "45.1907195",
+          "5.6386395",
+          "5.7015314"
+        ],
+        "class": "place",
+        "type": "town",
+        "display_name": "Seyssinet-Pariset, Isère, Auvergne-Rhône-Alpes, 38170, France",
+        "display_place": "Seyssinet-Pariset",
+        "display_address": "Isère, Auvergne-Rhône-Alpes, 38170, France",
+        "address": {
+          "name": "Seyssinet-Pariset",
+          "city": "Seyssinet-Pariset",
+          "state": "Auvergne-Rhône-Alpes",
+          "country": "France",
+          "country_code": "fr"
+        }
+      },
+      {
+        "place_id": "322811661238",
+        "osm_id": "402367",
+        "osm_type": "relation",
+        "lat": "48.9759637",
+        "lon": "2.1998877",
+        "boundingbox": [
+          "48.9496995",
+          "48.9904254",
+          "2.1733474",
+          "2.2287181"
+        ],
+        "class": "place",
+        "type": "town",
+        "display_name": "Cormeilles-en-Parisis, Val-d'Oise, Île-de-France, 95240, France",
+        "display_place": "Cormeilles-en-Parisis",
+        "display_address": "Val-d'Oise, Île-de-France, 95240, France",
+        "address": {
+          "name": "Cormeilles-en-Parisis",
+          "city": "Cormeilles-en-Parisis",
+          "state": "Île-de-France",
+          "country": "France",
+          "country_code": "fr"
+        }
+      },
+      {
+        "place_id": "320153181547",
+        "osm_id": "398224",
+        "osm_type": "relation",
+        "lat": "49.0535501",
+        "lon": "2.45143",
+        "boundingbox": [
+          "49.0286932",
+          "49.0678904",
+          "2.4112839",
+          "2.4824308"
+        ],
+        "class": "place",
+        "type": "village",
+        "display_name": "Fontenay-en-Parisis, Val-d'Oise, Île-de-France, 95190, France",
+        "display_place": "Fontenay-en-Parisis",
+        "display_address": "Val-d'Oise, Île-de-France, 95190, France",
+        "address": {
+          "name": "Fontenay-en-Parisis",
+          "city": "Fontenay-en-Parisis",
+          "state": "Île-de-France",
+          "country": "France",
+          "country_code": "fr"
+        }
+      }
+    ]
+  },
+  {
+    "city": "Paris",
+    "country": "fr",
+    "query": "Paris, riv",
+    "layer": "road",
+    "viewbox": "2.224122,48.8155755,2.4697602,48.902156",
+    "language": "native",
+    "status": 200,
+    "results": [
+      {
+        "place_id": "323609711093",
+        "osm_id": "1219554657",
+        "osm_type": "way",
+        "lat": "48.8571102",
+        "lon": "2.3468026",
+        "boundingbox": [
+          "48.857047",
+          "48.8571102",
+          "2.3468026",
+          "2.3470219"
+        ],
+        "class": "highway",
+        "type": "service",
+        "display_name": "Parc Rives de Seine - Georges Pompidou, 1er Arrondissement, Paris, Paris, Île-de-France, 75001, France",
+        "display_place": "Parc Rives de Seine - Georges Pompidou",
+        "display_address": "1er Arrondissement, Paris, Paris, Île-de-France, 75001, France",
+        "address": {
+          "name": "Parc Rives de Seine - Georges Pompidou",
+          "city": "Paris",
+          "suburb": "Paris",
+          "state": "Île-de-France",
+          "country": "France",
+          "country_code": "fr"
+        }
+      },
+      {
+        "place_id": "320461966823",
+        "osm_id": "162384245",
+        "osm_type": "way",
+        "lat": "48.8544109",
+        "lon": "2.3541531",
+        "boundingbox": [
+          "48.8541998",
+          "48.8546728",
+          "2.3535877",
+          "2.354633"
+        ],
+        "class": "highway",
+        "type": "service",
+        "display_name": "Parc Rives de Seine - Georges Pompidou, Quartier Les Îles, Paris, Paris, Île-de-France, 75004, France",
+        "display_place": "Parc Rives de Seine - Georges Pompidou",
+        "display_address": "Quartier Les Îles, Paris, Paris, Île-de-France, 75004, France",
+        "address": {
+          "name": "Parc Rives de Seine - Georges Pompidou",
+          "city": "Paris",
+          "suburb": "Paris",
+          "state": "Île-de-France",
+          "country": "France",
+          "country_code": "fr"
+        }
+      },
+      {
+        "place_id": "320283432218",
+        "osm_id": "76910099",
+        "osm_type": "way",
+        "lat": "48.8717158",
+        "lon": "2.3647748",
+        "boundingbox": [
+          "48.8717158",
+          "48.8718407",
+          "2.3647748",
+          "2.3651715"
+        ],
+        "class": "highway",
+        "type": "footway",
+        "display_name": "Passerelle Emmanuelle Riva, Quartier de la Porte-Saint-Martin, Paris, Paris, Île-de-France, 75010, France",
+        "display_place": "Passerelle Emmanuelle Riva",
+        "display_address": "Quartier de la Porte-Saint-Martin, Paris, Paris, Île-de-France, 75010, France",
+        "address": {
+          "name": "Passerelle Emmanuelle Riva",
+          "city": "Paris",
+          "suburb": "Paris",
+          "state": "Île-de-France",
+          "country": "France",
+          "country_code": "fr"
+        }
+      },
+      {
+        "place_id": "322496495452",
+        "osm_id": "85615129",
+        "osm_type": "way",
+        "lat": "48.84707085",
+        "lon": "2.26846072",
+        "boundingbox": [
+          "48.8468534",
+          "48.8475164",
+          "2.268214",
+          "2.2687927"
+        ],
+        "class": "highway",
+        "type": "pedestrian",
+        "display_name": "Place Théodore Rivière, Auteuil, Paris, Paris, Île-de-France, 75016, France",
+        "display_place": "Place Théodore Rivière",
+        "display_address": "Auteuil, Paris, Paris, Île-de-France, 75016, France",
+        "address": {
+          "name": "Place Théodore Rivière",
+          "city": "Paris",
+          "suburb": "Paris",
+          "state": "Île-de-France",
+          "country": "France",
+          "country_code": "fr"
+        }
+      },
+      {
+        "place_id": "321273563423",
+        "osm_id": "1274939128",
+        "osm_type": "way",
+        "lat": "48.8621753",
+        "lon": "2.3371519",
+        "boundingbox": [
+          "48.8615266",
+          "48.8624677",
+          "2.3362656",
+          "2.3391476"
+        ],
+        "class": "highway",
+        "type": "residential",
+        "display_name": "Rue de Rivoli, Quartier du Palais Royal, Paris, Paris, Île-de-France, 75001, France",
+        "display_place": "Rue de Rivoli",
+        "display_address": "Quartier du Palais Royal, Paris, Paris, Île-de-France, 75001, France",
+        "address": {
+          "name": "Rue de Rivoli",
+          "city": "Paris",
+          "suburb": "Paris",
+          "state": "Île-de-France",
+          "country": "France",
+          "country_code": "fr"
+        }
+      },
+      {
+        "place_id": "320734298347",
+        "osm_id": "173292034",
+        "osm_type": "way",
+        "lat": "48.8579114",
+        "lon": "2.3502093",
+        "boundingbox": [
+          "48.8577839",
+          "48.8580771",
+          "2.3496749",
+          "2.3506209"
+        ],
+        "class": "highway",
+        "type": "residential",
+        "display_name": "Rue de Rivoli, Quartier Saint-Merri, Paris, Paris, Île-de-France, 75004, France",
+        "display_place": "Rue de Rivoli",
+        "display_address": "Quartier Saint-Merri, Paris, Paris, Île-de-France, 75004, France",
+        "address": {
+          "name": "Rue de Rivoli",
+          "city": "Paris",
+          "suburb": "Paris",
+          "state": "Île-de-France",
+          "country": "France",
+          "country_code": "fr"
+        }
+      }
+    ]
+  }
+]

@@ -43,7 +43,7 @@ python3 -m http.server 18080 --bind 127.0.0.1 --directory "$ICAL_DIR" >/dev/null
 ICAL_SERVER_PID=$!
 
 # This smoke environment intentionally exercises the optional integration without a key.
-GEOAPIFY_API_KEY= sbt -batch run >"$LOG_FILE" 2>&1 &
+LOCATIONIQ_API_KEY= sbt -batch run >"$LOG_FILE" 2>&1 &
 SERVER_PID=$!
 
 cleanup() {
@@ -176,8 +176,9 @@ for suffix, authenticated, expected, message in [
     ("?q=bar&type=city", True, 400, "select a country before searching"),
     ("?q=alfo&type=street&country=ES", True, 400, "select a city before searching for a street"),
     ("?q=bar&type=city&country=ES", True, 503, "Address autocomplete is not configured"),
-    ("?q=alf&type=street&country=ES&cityId=51f07665660fc4024059dc0a96dfac6c123&city=Barcelona", True, 503, "Address autocomplete is not configured"),
-    ("?q=alf&type=street&country=ES&cityId=51f07665660fc4024059dc0a96dfac6c123&city=", True, 400, "city must contain between 1 and 120 characters"),
+    ("?q=alf&type=street&country=ES&cityId=locationiq:323126006243&city=Barcelona&bounds=2.05,41.31,2.23,41.47", True, 503, "Address autocomplete is not configured"),
+    ("?q=alf&type=street&country=ES&cityId=locationiq:323126006243&city=&bounds=2.05,41.31,2.23,41.47", True, 400, "city must contain between 1 and 120 characters"),
+    ("?q=alf&type=street&country=ES&cityId=locationiq:323126006243&city=Barcelona&bounds=NaN,1,2,3", True, 400, "city bounds are invalid"),
 ]:
     request = urllib.request.Request(base + suffix, headers={"Cookie": session} if authenticated else {})
     try:

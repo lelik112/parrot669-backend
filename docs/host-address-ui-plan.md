@@ -3,14 +3,15 @@
 Updated 2026-09-23: country → city → street → house number.
 
 - Countries use a built-in ISO list from our backend, with localized names in the
-  browser. They never require a Geoapify call and load once per host page.
-- Cities use autocomplete restricted to the chosen country. Streets use the
-  selected city's provider place ID as a hard boundary, plus the country filter.
-- The selected city name is also sent and checked on both backend and frontend;
-  live Geoapify responses include neighboring municipalities despite the place filter.
-  Duplicate street segments are collapsed. An empty Spanish street lookup gets one
-  bounded `carrer d'` fallback for partial Catalan names; its result shares the cache.
-  Live Barcelona `alf` regression and request-count tests cover this provider behavior.
+  browser. They never require a provider call and load once per host page.
+- Cities use LocationIQ autocomplete restricted to the chosen country. The selected
+  city carries its provider ID and bounding box into the street query.
+- Every street lookup sends `<selected city>, <typed fragment>` with `layers=road`,
+  country and geographic restrictions. The selected city is checked on backend and
+  frontend; an envelope can also contain neighboring municipalities. Duplicate road
+  segments are collapsed. No language-specific fallback or POI-to-street conversion.
+- The backend paces provider requests and reports quota errors without losing input.
+  The form displays the visible Search by LocationIQ.com attribution link.
 - Street suggestions do not require a house number. The owner enters it separately;
   this does not spend provider credits or claim that the building was verified.
 - Lookups require 3 characters and a 700ms pause; focusing fields does not send a
@@ -31,4 +32,4 @@ Validation: scoped request and quota-saving tests, mobile blur/click sequencing,
 selection invalidation, cache isolation/expiry/error retry, legacy preservation,
 full property round-trips and guest privacy in disposable-database HTTP checks.
 
-Provider contract: https://apidocs.geoapify.com/docs/geocoding/address-autocomplete/
+Provider contract: https://docs.locationiq.com/reference/autocomplete-2

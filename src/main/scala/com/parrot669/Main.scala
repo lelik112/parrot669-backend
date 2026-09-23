@@ -6,7 +6,7 @@ import com.comcast.ip4s.{Host, Port}
 import com.parrot669.config.AppConfig
 import com.parrot669.db.Database
 import com.parrot669.http.Routes
-import com.parrot669.integration.{GeoapifyClient, HttpIcalFetcher}
+import com.parrot669.integration.{LocationIqClient, HttpIcalFetcher}
 import com.parrot669.messaging.{MessagingRepository, MessagingRoutes, MessagingService}
 import com.parrot669.repo.{AuthRepository, ParrotRepository}
 import com.parrot669.service.{AuthService, EmailSender, EmailVerificationService, GeocodingService, ParrotService, ResendEmailSender}
@@ -46,7 +46,8 @@ object Main extends IOApp.Simple {
               .getOrElse(EmailSender.unconfigured[IO])
         emailVerificationService = new EmailVerificationService[IO](authRepo, emailSender)
         authService = new AuthService[IO](authRepo, emailVerificationService)
-        geocodingService <- Resource.eval(GeocodingService.create[IO](config.geoapifyApiKey, GeoapifyClient.live[IO]))
+        geocodingClient <- Resource.eval(LocationIqClient.live[IO])
+        geocodingService <- Resource.eval(GeocodingService.create[IO](config.locationIqApiKey, geocodingClient))
         messaging = new MessagingService[IO](new MessagingRepository[IO](xa))
         routes = new Routes[IO](
           service,

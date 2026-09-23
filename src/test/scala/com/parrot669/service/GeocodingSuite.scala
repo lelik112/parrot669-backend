@@ -1,270 +1,179 @@
 package com.parrot669.service
 
 import cats.effect.{IO, Ref}
-import cats.syntax.all._
 import cats.effect.unsafe.implicits.global
+import cats.syntax.all._
 import com.parrot669.config.AppConfig
-import com.parrot669.integration.{GeoapifyClient, GeoapifyResponse}
+import com.parrot669.domain.GeocodeBounds
+import com.parrot669.integration.{LocationIqClient, LocationIqResponse}
+import io.circe.{Json, parser}
 import io.circe.generic.auto._
 import io.circe.syntax._
-
 import java.net.URLDecoder
-import java.net.http.HttpTimeoutException
+import java.net.http.{HttpRequest, HttpTimeoutException}
 import java.nio.charset.StandardCharsets.UTF_8
 import scala.concurrent.duration._
 
 class GeocodingSuite extends munit.FunSuite {
-  private val fixture = """{
-    "results": [{
-      "formatted": "Carrer de Mallorca 401, Barcelona, Spain",
-      "country_code": "es", "country": "Spain", "city": "Barcelona",
-      "lat": 41.4036, "lon": 2.1744, "place_id": "test-place",
-      "street": "Carrer de Mallorca", "housenumber": "401", "result_type": "building",
-      "rank": {"confidence": 1}, "datasource": {"name": "not-for-client"}
-    }],
-    "query": {"apiKey": "provider-secret"}
-  }"""
+  private val captured = scala.util.Using.resource(scala.io.Source.fromInputStream(
+    getClass.getResourceAsStream("/geocoding/locationiq-live-evaluation.json"), "UTF-8")) { source =>
+    parser.parse(source.mkString).toOption.get.asArray.get.toList
+  }
+  private def fixture(query: String): Json = captured.find(_.hcursor.get[String]("query").contains(query)).get
+    .hcursor.downField("results").focus.get
+  private val cityId = "locationiq:323126006243"
+  private val bounds = "2.0524977,41.3170353,2.2283555,41.4679135"
+  private val noCall = IO.raiseError[LocationIqResponse](new AssertionError("provider must not be called"))
+  private def service(response: IO[LocationIqResponse], key: Option[String] = Some("test-secret")) =
+    GeocodingService.create[IO](key, new LocationIqClient[IO](_ => response)).unsafeRunSync()
+  private def city(geo: GeocodingService[IO]) = geo.autocomplete(Some("barcelona"), Some("city"), Some("ES"))
+  private def street(geo: GeocodingService[IO], query: String = "alf", box: String = bounds) =
+    geo.autocomplete(Some(query), Some("street"), Some("ES"), Some(cityId), Some("Barcelona"), Some(box))
+  private def params(request: HttpRequest) = request.uri().getRawQuery.split("&").map { p =>
+    val parts = p.split("=", 2); parts(0) -> URLDecoder.decode(parts(1), UTF_8)
+  }.toMap
 
-  private def service(response: IO[GeoapifyResponse], key: Option[String] = Some("test-secret")) =
-    GeocodingService.create[IO](key, new GeoapifyClient[IO](_ => response)).unsafeRunSync()
-
-  private val mustNotCallProvider = IO.raiseError[GeoapifyResponse](
-    new AssertionError("provider should not be called")
-  )
-
-  test("production config accepts a missing or blank Geoapify key") {
-    val env = Map("APP_ENV" -> "prod", "PARROT_ADMIN_TOKEN" -> "test-admin", "RESEND_API_KEY" -> "test-mail")
-    assertEquals(AppConfig.fromEnv(env).map(_.geoapifyApiKey), Right(None))
-    assertEquals(AppConfig.fromEnv(env + ("GEOAPIFY_API_KEY" -> "  ")).map(_.geoapifyApiKey), Right(None))
-    assertEquals(AppConfig.fromEnv(env + ("GEOAPIFY_API_KEY" -> " test-key ")).map(_.geoapifyApiKey), Right(Some("test-key")))
-    // Existing production requirements are still enforced.
+  test("production starts without LocationIQ; missing or blank key gives sanitized 503") {
+    val env = Map("APP_ENV" -> "prod", "PARROT_ADMIN_TOKEN" -> "admin", "RESEND_API_KEY" -> "mail")
+    assertEquals(AppConfig.fromEnv(env).map(_.locationIqApiKey), Right(None))
+    assertEquals(AppConfig.fromEnv(env + ("LOCATIONIQ_API_KEY" -> " ")).map(_.locationIqApiKey), Right(None))
+    assertEquals(AppConfig.fromEnv(env + ("LOCATIONIQ_API_KEY" -> " key ")).map(_.locationIqApiKey), Right(Some("key")))
     assert(AppConfig.fromEnv(env - "RESEND_API_KEY").isLeft)
+    List(None, Some(" ")).foreach(key => assertEquals(city(service(noCall, key)).unsafeRunSync(),
+      Left(ServiceError.Unavailable("Address autocomplete is not configured"))))
   }
 
-  test("missing API key returns a useful unavailable error without calling provider") {
-    List(None, Some(" ")).foreach { key =>
-      assertEquals(
-        service(mustNotCallProvider, key).autocomplete(Some("Barcelona")).unsafeRunSync(),
-        Left(ServiceError.Unavailable("Address autocomplete is not configured"))
-      )
-    }
-  }
-
-  test("missing, blank, short and overlong queries fail before config/provider lookup") {
-    List(None, Some(""), Some("  "), Some("ab"), Some("x" * 257)).foreach { query =>
-      val result = service(mustNotCallProvider, None).autocomplete(query).unsafeRunSync()
-      assert(result.left.toOption.exists(_.isInstanceOf[ServiceError.Invalid]), s"invalid result: $result")
-    }
-    assertEquals(
-      service(mustNotCallProvider).autocomplete(None).unsafeRunSync(),
-      Left(ServiceError.Invalid("q is required"))
-    )
-  }
-
-  test("maps Geoapify response to only the address fields required by property validation") {
-    val result = service(IO.pure(GeoapifyResponse(200, fixture)))
-      .autocomplete(Some("Barcelona")).unsafeRunSync().toOption.get
-    assertEquals(result.size, 1)
-    val address = result.head
-    assertEquals(address.countryCode, Some("ES"))
-    assertEquals(address.country, Some("Spain"))
-    assertEquals(address.city, Some("Barcelona"))
-    assertEquals(address.address, "Carrer de Mallorca 401, Barcelona, Spain")
-    assertEquals(address.latitude, 41.4036)
-    assertEquals(address.longitude, 2.1744)
-    assertEquals(address.placeId, "test-place")
-    assertEquals(address.street, Some("Carrer de Mallorca"))
-    assertEquals(address.houseNumber, Some("401"))
-    assertEquals(address.resultType, Some("building"))
-    assertEquals(address.asJson.asObject.get.keys.toSet,
-      Set("address", "countryCode", "country", "city", "latitude", "longitude", "placeId", "street", "houseNumber", "resultType"))
-    assert(!result.asJson.noSpaces.contains("secret"))
-    assert(!result.asJson.noSpaces.contains("datasource"))
-  }
-
-  test("encodes unicode and query delimiters; trims input; uses fixed provider and bounded request") {
-    val text = "Carrer d'Aragó & apiKey=not-a-key + #1"
-    var calls = 0
-    val client = new GeoapifyClient[IO](request => IO {
-      calls += 1
-      assertEquals(request.uri().getScheme, "https")
-      assertEquals(request.uri().getHost, "api.geoapify.com")
-      assertEquals(request.uri().getPath, "/v1/geocode/autocomplete")
-      val params = request.uri().getRawQuery.split("&").map { part =>
-        val pieces = part.split("=", 2)
-        pieces(0) -> URLDecoder.decode(pieces(1), UTF_8)
-      }.toMap
-      assertEquals(params, Map("text" -> text.toLowerCase(java.util.Locale.ROOT), "apiKey" -> "test-secret", "format" -> "json", "lang" -> "en", "limit" -> "10", "bias" -> "countrycode:none"))
-      assertEquals(request.timeout().get().getSeconds, 8L)
-      GeoapifyResponse(200, "{\"results\":[]}")
-    })
-    val result = GeocodingService.create[IO](Some("test-secret"), client).unsafeRunSync()
-      .autocomplete(Some(s"  $text  ")).unsafeRunSync()
-    assertEquals(result, Right(Nil))
-    assertEquals(calls, 1)
-  }
-
-  test("filters city-only and street-only suggestions even when country, city and coordinates exist") {
-    val full = io.circe.parser.parse(fixture).toOption.get.hcursor.downField("results").focus.get.asArray.get.head
-    val city = full.mapObject(_.remove("street").remove("housenumber")
-      .add("formatted", io.circe.Json.fromString("Беларусь, Минск"))
-      .add("result_type", io.circe.Json.fromString("city")))
-    val street = full.mapObject(_.remove("housenumber").add("result_type", io.circe.Json.fromString("street")))
-    val response = io.circe.Json.obj("results" -> io.circe.Json.arr(city, street, full)).noSpaces
-    val result = service(IO.pure(GeoapifyResponse(200, response)))
-      .autocomplete(Some("address")).unsafeRunSync().toOption.get
-    assertEquals(result.map(_.resultType), List(Some("building")))
-  }
-
-  test("provider HTTP errors, invalid JSON and timeouts become sanitized unavailable errors") {
-    val responses = List(
-      IO.pure(GeoapifyResponse(401, "apiKey=test-secret")),
-      IO.pure(GeoapifyResponse(429, "provider quota exceeded")),
-      IO.pure(GeoapifyResponse(500, "test-secret")),
-      IO.pure(GeoapifyResponse(200, "invalid JSON test-secret")),
-      IO.pure(GeoapifyResponse(200, "{}")),
-      IO.raiseError[GeoapifyResponse](new HttpTimeoutException("https://provider/?apiKey=test-secret"))
-    )
-    responses.foreach { response =>
-      val result = service(response).autocomplete(Some("Barcelona")).unsafeRunSync()
-      assertEquals(result, Left(ServiceError.Unavailable("Address autocomplete is temporarily unavailable. Please try again later.")))
-      assert(!result.toString.contains("test-secret"))
-    }
-  }
-
-  test("country list is local; invalid scopes never call Geoapify") {
-    assert(GeocodingService.countries.size > 200)
-    assert(GeocodingService.countries.exists(c => c.code == "ES" && c.name == "Spain"))
-    val geo = service(mustNotCallProvider)
-    List(
+  test("invalid text, country, city identity and bounds fail before provider calls") {
+    val geo = service(noCall)
+    val invalid = List(None, Some(""), Some("  "), Some("ab"), Some("x" * 257)).map(q => geo.autocomplete(q)) ++ List(
       geo.autocomplete(Some("bar"), Some("city")),
-      geo.autocomplete(Some("bar"), Some("city"), Some("ES|countrycode:US")),
-      geo.autocomplete(Some("alfo"), Some("street"), Some("ES")),
-      geo.autocomplete(Some("alfo"), Some("street"), Some("ES"), Some("abc|countrycode:US")),
-      geo.autocomplete(Some("bar"), Some("unsupported"), Some("ES"))
-    ).foreach(call => assert(call.unsafeRunSync().left.toOption.exists(_.isInstanceOf[ServiceError.Invalid])))
+      geo.autocomplete(Some("bar"), Some("city"), Some("ES&key=other")),
+      geo.autocomplete(Some("bar"), Some("unknown"), Some("ES")),
+      geo.autocomplete(Some("alf"), Some("street"), Some("ES"), Some(cityId), Some("Barcelona")),
+      geo.autocomplete(Some("alf"), Some("street"), Some("ES"), Some(cityId), None, Some(bounds)),
+      geo.autocomplete(Some("alf"), Some("street"), Some("ES"), Some("old-geoapify-id"), Some("Barcelona"), Some(bounds)),
+      geo.autocomplete(Some("alf"), Some("street"), Some("ES"), Some(cityId), Some(" "), Some(bounds))
+    ) ++ List("", "1,2,3", "NaN,1,2,3", "0,0,Infinity,3", "-181,0,1,3", "3,1,2,4", "1,4,2,3").map(b => street(geo, box = b))
+    invalid.foreach(call => assert(call.unsafeRunSync().left.toOption.exists(_.isInstanceOf[ServiceError.Invalid])))
+    assertEquals(geo.autocomplete(None).unsafeRunSync(), Left(ServiceError.Invalid("q is required")))
+    assert(GeocodingService.countries.exists(c => c.code == "ES" && c.name == "Spain"))
   }
 
-  test("city searches stay inside a country; streets use selected city boundary and need no house number") {
-    val cityId = "51f07665660fc4024059dc0a96dfac6c123"
-    val cityJson = """{"results":[{"formatted":"Barcelona, Spain","country_code":"es","country":"Spain","city":"Barcelona","lat":41.39,"lon":2.16,"place_id":"51f07665660fc4024059dc0a96dfac6c123","result_type":"city"}]}"""
-    val streetJson = """{"results":[{"formatted":"Carrer d'Alfons el Magnànim, Barcelona, Spain","country_code":"es","country":"Spain","city":"Barcelona","lat":41.42,"lon":2.22,"place_id":"street-alfons","street":"Carrer d'Alfons el Magnànim","result_type":"street"}]}"""
-    val client = new GeoapifyClient[IO](request => IO {
-      val params = request.uri().getRawQuery.split("&").map { part =>
-        val p = part.split("=", 2); p(0) -> URLDecoder.decode(p(1), UTF_8)
-      }.toMap
-      assertEquals(params("limit"), "10")
-      assertEquals(params("bias"), "countrycode:none")
-      if (params("type") == "city") {
-        assertEquals(params("filter"), "countrycode:es")
-        GeoapifyResponse(200, cityJson)
-      } else {
-        assertEquals(params("type"), "street")
-        assertEquals(params("text"), "alfo")
-        assertEquals(params("filter"), "countrycode:es|place:" + cityId)
-        GeoapifyResponse(200, streetJson)
-      }
+  test("city mapping returns bounds, native city and canonical country without provider metadata") {
+    val result = city(service(IO.pure(LocationIqResponse(200, fixture("Barcelona").noSpaces)))).unsafeRunSync().toOption.get.head
+    assertEquals(result.city, Some("Barcelona")); assertEquals(result.country, Some("Spain"))
+    assertEquals(result.countryCode, Some("ES")); assertEquals(result.placeId, cityId)
+    assertEquals(result.bounds, GeocodeBounds.parse(bounds)); assertEquals(result.resultType, Some("city"))
+    assertEquals(result.asJson.asObject.get.keys.toSet,
+      Set("address", "countryCode", "country", "city", "latitude", "longitude", "placeId", "street", "houseNumber", "resultType", "bounds"))
+  }
+
+  test("fixed HTTPS endpoint, encoded Unicode, explicit layers and geographic constraints") {
+    val query = "Carrer d'Aragó & key=other + #1"
+    val client = new LocationIqClient[IO](request => IO {
+      assertEquals(request.uri().getHost, "api.locationiq.com")
+      assertEquals(request.uri().getScheme, "https"); assertEquals(request.uri().getPath, "/v1/autocomplete")
+      assertEquals(request.timeout().get().getSeconds, 8L)
+      val p = params(request)
+      val common = Map("key" -> "secret", "limit" -> "20", "dedupe" -> "1", "normalizecity" -> "1", "accept-language" -> "native", "countrycodes" -> "es")
+      if (p("layers") == "city") assertEquals(p, common ++ Map("q" -> "barcelona", "layers" -> "city"))
+      else assertEquals(p, common ++ Map("q" -> ("barcelona, " + query.toLowerCase(java.util.Locale.ROOT)), "layers" -> "road", "bounded" -> "1", "viewbox" -> bounds))
+      LocationIqResponse(200, "[]")
     })
-    val geo = GeocodingService.create[IO](Some("test-secret"), client).unsafeRunSync()
-    assertEquals(geo.autocomplete(Some("bar"), Some("city"), Some("ES")).unsafeRunSync().toOption.get.head.city, Some("Barcelona"))
-    val streets = geo.autocomplete(Some("alfo"), Some("street"), Some("ES"), Some(cityId)).unsafeRunSync().toOption.get
-    assertEquals(streets.map(_.street), List(Some("Carrer d'Alfons el Magnànim")))
-    assertEquals(streets.head.houseNumber, None)
+    val geo = GeocodingService.create[IO](Some("secret"), client).unsafeRunSync()
+    city(geo).unsafeRunSync()
+    assertEquals(street(geo, "  " + query + "  ").unsafeRunSync(), Right(Nil))
   }
 
-  test("simultaneous and repeated normalized queries share one provider request") {
+  test("real three-city road fixtures map only roads and deduplicate before the UI limit") {
+    List(("Barcelona", "ES", "alf", "Carrer d'Alfons el Magnànim", 8),
+      ("Madrid", "ES", "alc", "Calle de Alcalá", 8),
+      ("Paris", "FR", "riv", "Rue de Rivoli", 4)).foreach { case (name, country, query, expected, count) =>
+      val cityGeo = service(IO.pure(LocationIqResponse(200, fixture(name).noSpaces)))
+      val selected = cityGeo.autocomplete(Some(name), Some("city"), Some(country)).unsafeRunSync().toOption.get.find(_.city.contains(name)).get
+      val geo = service(IO.pure(LocationIqResponse(200, fixture(s"$name, $query").noSpaces)))
+      val found = geo.autocomplete(Some(query), Some("street"), Some(country), Some(selected.placeId), selected.city,
+        selected.bounds.map(_.queryValue)).unsafeRunSync().toOption.get
+      assertEquals(found.size, count); assert(found.exists(_.street.contains(expected)))
+      assert(found.forall(v => v.resultType.contains("street") && v.houseNumber.isEmpty && v.bounds.isEmpty))
+      assert(found.forall(v => !v.asJson.asObject.get.contains("bounds")))
+    }
+  }
+
+  test("neighbors, wrong countries, outside coordinates and POIs cannot become streets") {
+    val road = fixture("Barcelona, alf").asArray.get.head
+    def component(k: String, value: String) = road.mapObject(obj => obj.add("address",
+      obj("address").get.mapObject(_.add(k, Json.fromString(value)))))
+    val poi = road.mapObject(_.add("class", "railway".asJson))
+    val outside = road.mapObject(_.add("lat", "45".asJson))
+    val invalid = road.mapObject(_.add("lon", "NaN".asJson))
+    val body = Json.arr(component("city", "Badalona"), component("country_code", "fr"), poi, outside, invalid, road, road)
+    val found = street(service(IO.pure(LocationIqResponse(200, body.noSpaces)))).unsafeRunSync().toOption.get
+    assertEquals(found.size, 1); assertEquals(found.head.city, Some("Barcelona"))
+    val brokenCity = fixture("Barcelona").asArray.get.head.mapObject(_.remove("boundingbox"))
+    assertEquals(city(service(IO.pure(LocationIqResponse(200, Json.arr(brokenCity).noSpaces)))).unsafeRunSync(), Right(Nil))
+  }
+
+  test("legacy complete-address search rejects city-only and street-only records") {
+    val road = fixture("Barcelona, alf").asArray.get.head
+    val building = road.mapObject(_.add("class", "building".asJson).add("address", Json.obj(
+      "country_code" -> "es".asJson, "country" -> "España".asJson, "city" -> "Barcelona".asJson,
+      "road" -> "Carrer d'Alfons el Magnànim".asJson, "house_number" -> "40".asJson)))
+    val body = Json.arr(fixture("Barcelona").asArray.get.head, road, building)
+    val result = service(IO.pure(LocationIqResponse(200, body.noSpaces))).autocomplete(Some("address")).unsafeRunSync().toOption.get
+    assertEquals(result.size, 1); assertEquals(result.head.houseNumber, Some("40"))
+    assertEquals(result.head.resultType, Some("building")); assert(PropertyAddress.validate(result.head).isRight)
+  }
+
+  test("errors never expose keys; 404 means empty, quota errors become 429") {
+    (List(401, 403, 500).map(status => IO.pure(LocationIqResponse(status, "test-secret"))) ++
+      List(IO.pure(LocationIqResponse(200, "invalid JSON test-secret")), IO.pure(LocationIqResponse(200, "{}")),
+        IO.raiseError[LocationIqResponse](new HttpTimeoutException("https://provider/?key=test-secret")))).foreach { response =>
+      assertEquals(city(service(response)).unsafeRunSync(),
+        Left(ServiceError.Unavailable("Address autocomplete is temporarily unavailable. Please try again later.")))
+    }
+    assertEquals(city(service(IO.pure(LocationIqResponse(404, "not found")))).unsafeRunSync(), Right(Nil))
+    assert(city(service(IO.pure(LocationIqResponse(429, "test-secret")))).unsafeRunSync()
+      .left.toOption.exists(_.isInstanceOf[ServiceError.RateLimited]))
+  }
+
+  test("concurrent, repeated and empty queries use one request without a language fallback") {
     (for {
       calls <- Ref.of[IO, Int](0)
-      client = new GeoapifyClient[IO](_ => calls.update(_ + 1) *> IO.sleep(30.millis).as(GeoapifyResponse(200, fixture)))
+      client = new LocationIqClient[IO](_ => calls.update(_ + 1) *> IO.sleep(20.millis).as(LocationIqResponse(200, fixture("Barcelona, alf").noSpaces)))
       geo <- GeocodingService.create[IO](Some("key"), client)
-      results <- List.fill(8)(geo.autocomplete(Some("  Barcelona  "))).parSequence
-      again <- geo.autocomplete(Some("barcelona"))
+      results <- List.fill(8)(street(geo)).parSequence
+      again <- street(geo, "  ALF  ")
       count <- calls.get
+      emptyCalls <- Ref.of[IO, Int](0)
+      empty <- GeocodingService.create[IO](Some("key"), new LocationIqClient[IO](_ => emptyCalls.update(_ + 1).as(LocationIqResponse(200, "[]"))))
+      _ <- List.fill(3)(street(empty)).sequence
+      emptyCount <- emptyCalls.get
     } yield {
-      assertEquals(count, 1)
-      assert(results.forall(_ == again))
-      assert(again.toOption.get.nonEmpty)
+      assertEquals(count, 1); assertEquals(emptyCount, 1)
+      assert(results.forall(_ == again)); assertEquals(again.toOption.get.size, 8)
     }).unsafeRunSync()
   }
 
-  test("street scope filters neighboring cities and groups duplicate street segments") {
-    val full = io.circe.parser.parse(fixture).toOption.get.hcursor.downField("results").focus.get.asArray.get.head
-    val street = full.mapObject(_.remove("housenumber").add("result_type", io.circe.Json.fromString("street")))
-    val neighbor = street.mapObject(_.add("city", io.circe.Json.fromString("Badalona")))
-    val segment = street.mapObject(_.add("place_id", io.circe.Json.fromString("another-segment")))
-    val response = io.circe.Json.obj("results" -> io.circe.Json.arr(neighbor, street, segment)).noSpaces
-    val geo = service(IO.pure(GeoapifyResponse(200, response)))
-    val result = geo.autocomplete(Some("mallorca"), Some("street"), Some("ES"),
-      Some("51f07665660fc4024059dc0a96dfac6c123"), Some("  Barcelona  ")).unsafeRunSync().toOption.get
-    assertEquals(result.size, 1)
-    assertEquals(result.head.city, Some("Barcelona"))
-    assertEquals(result.head.street, Some("Carrer de Mallorca"))
-  }
-
-  test("live Barcelona alf regression: one scoped fallback, no neighbors, and no repeat credits") {
-    val stream = getClass.getResourceAsStream("/geocoding/barcelona-carrer-d-alf.json")
-    val captured = scala.util.Using.resource(scala.io.Source.fromInputStream(stream, "UTF-8"))(_.mkString)
-    var queries = List.empty[String]
-    val client = new GeoapifyClient[IO](request => IO {
-      val params = request.uri().getRawQuery.split("&").map { part =>
-        val p = part.split("=", 2); p(0) -> URLDecoder.decode(p(1), UTF_8)
-      }.toMap
-      queries = queries :+ params("text")
-      assertEquals(params("type"), "street")
-      assertEquals(params("filter"), "countrycode:es|place:51f07665660fc4024059dc0a96dfac6c123")
-      GeoapifyResponse(200, if (params("text") == "carrer d'alf") captured else "{\"results\":[]}")
-    })
-    val geo = GeocodingService.create[IO](Some("secret"), client).unsafeRunSync()
-    def lookup = geo.autocomplete(Some("alf"), Some("street"), Some("ES"),
-      Some("51f07665660fc4024059dc0a96dfac6c123"), Some("Barcelona"))
-    val result = List.fill(4)(lookup).parSequence.unsafeRunSync()
-    assertEquals(queries, List("alf", "carrer d'alf"))
-    assert(result.forall(_ == result.head))
-    assertEquals(result.head.toOption.get.flatMap(_.street),
-      List("Carrer d'Alfons XII", "Carrer d'Alfons el Magnànim", "Carrer d'Alfambra"))
-    assertEquals(lookup.unsafeRunSync(), result.head)
-    assertEquals(queries.size, 2)
-  }
-
-  test("fallback does not retry errors or expand successful, foreign or already prefixed searches") {
-    val scope = Some("51f07665660fc4024059dc0a96dfac6c123")
-    List(
-      ("alf", "ES", 429, "provider error"),
-      ("alf", "ES", 200, fixture),
-      ("alf", "FR", 200, "{\"results\":[]}"),
-      ("carrer d'alf", "ES", 200, "{\"results\":[]}")
-    ).foreach { case (q, country, status, body) =>
-      var calls = 0
-      val client = new GeoapifyClient[IO](_ => IO { calls += 1; GeoapifyResponse(status, body) })
-      val geo = GeocodingService.create[IO](Some("secret"), client).unsafeRunSync()
-      geo.autocomplete(Some(q), Some("street"), Some(country), scope, Some("Barcelona")).unsafeRunSync()
-      assertEquals(calls, 1)
-    }
-  }
-
-  test("cache separates scope, bounds memory, expires and never retains provider errors") {
+  test("cache separates country/bounds, expires, bounds memory, and drops failures") {
     (for {
       calls <- Ref.of[IO, Int](0)
-      client = new GeoapifyClient[IO](_ => calls.updateAndGet(_ + 1).map(n =>
-        if (n == 1) GeoapifyResponse(503, "unavailable") else GeoapifyResponse(200, "{\"results\":[]}")))
+      client = new LocationIqClient[IO](_ => calls.updateAndGet(_ + 1).map(n =>
+        if (n == 1) LocationIqResponse(429, "quota") else LocationIqResponse(200, "[]")))
       geo <- GeocodingService.create[IO](Some("key"), client, 1.hour, 1)
-      failed <- geo.autocomplete(Some("bar"), Some("city"), Some("ES"))
-      _ <- geo.autocomplete(Some("bar"), Some("city"), Some("ES"))
-      _ <- geo.autocomplete(Some("bar"), Some("city"), Some("ES"))
-      afterRetry <- calls.get
-      _ <- geo.autocomplete(Some("bar"), Some("city"), Some("FR"))
-      _ <- geo.autocomplete(Some("bar"), Some("city"), Some("ES"))
-      afterEviction <- calls.get
+      failed <- city(geo)
+      _ <- city(geo) *> city(geo)
+      retried <- calls.get
+      _ <- geo.autocomplete(Some("barcelona"), Some("city"), Some("FR")) *> city(geo)
+      evicted <- calls.get
+      _ <- street(geo) *> street(geo, box = "2,41,2.3,41.5")
+      scoped <- calls.get
       expiring <- GeocodingService.create[IO](Some("key"), client, 20.millis)
-      _ <- expiring.autocomplete(Some("bar"), Some("city"), Some("ES"))
-      _ <- IO.sleep(40.millis)
-      _ <- expiring.autocomplete(Some("bar"), Some("city"), Some("ES"))
-      afterExpiry <- calls.get
+      _ <- city(expiring) *> IO.sleep(40.millis) *> city(expiring)
+      expired <- calls.get
     } yield {
-      assert(failed.isLeft)
-      assertEquals(afterRetry, 2)
-      assertEquals(afterEviction, 4)
-      assertEquals(afterExpiry, 6)
+      assert(failed.isLeft); assertEquals(retried, 2); assertEquals(evicted, 4)
+      assertEquals(scoped, 6); assertEquals(expired, 8)
     }).unsafeRunSync()
   }
 }
