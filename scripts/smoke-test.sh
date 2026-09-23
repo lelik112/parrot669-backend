@@ -771,3 +771,4 @@ print("Property deletion passed")
 PY
 
 python3 scripts/test-unavailability.py "http://localhost:$HTTP_PORT" "$COOKIE_JAR" "$OTHER_COOKIE_JAR"
+python3 scripts/test-property-address.py "http://localhost:$HTTP_PORT" "$COOKIE_JAR" "$OTHER_COOKIE_JAR"

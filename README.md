@@ -21,9 +21,27 @@ Missing/invalid `q` returns 400, a missing/expired session returns 401, and prov
 failures/timeouts return a sanitized 503. Requests have a 3-second connection timeout
 and an 8-second HTTP timeout; provider redirects are not followed.
 
-This endpoint does not save addresses or change Property, migrations, guest location
-lists or guest search. See [the host UI plan](docs/host-address-ui-plan.md) for the next
-phase, including the separate property persistence work.
+Autocomplete itself does not write to the database. The host create/edit forms save
+the selected result through the property API described below.
+
+## Property addresses — 2026-09-23
+
+`POST /api/properties` and `PUT /api/properties/:id` accept an optional nested `address`
+with the seven autocomplete fields. A saved address must have a country code, country,
+city, valid coordinates and place ID. Strings are trimmed, country codes uppercased,
+and field lengths validated before writing. The nested address is authoritative for
+country/city. Omitting it on update preserves the saved location (including when
+saving minimum stay or cleaning fee). Older Barcelona create requests remain compatible.
+
+Migration V19 adds nullable address/coordinate/place ID columns and removes the legacy
+Barcelona-only city-code constraint. Existing property locations and availability are
+preserved. The owner dashboard and property create/update responses return the address;
+public profiles and guest search never expose the full address or precise coordinates.
+Guest location lists/search still use PostgreSQL, including newly added cities/countries.
+
+The host UI now implements the [address workflow](docs/host-address-ui-plan.md).
+`scripts/test-property-address.py` checks persistence, editing, validation, owner isolation,
+address preservation when saving other settings, guest search and public response privacy.
 
 ### Geoapify changelog — 2026-09-23
 

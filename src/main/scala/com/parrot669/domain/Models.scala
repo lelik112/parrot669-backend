@@ -21,7 +21,13 @@ final case class PropertyRecord(
     sleeps: Int,
     minStayDays: Int,
     cleaningFeeCents: Option[Long],
-    createdAt: OffsetDateTime
+    createdAt: OffsetDateTime,
+    countryCode: String,
+    country: String,
+    address: Option[String],
+    latitude: Option[Double],
+    longitude: Option[Double],
+    placeId: Option[String]
 )
 
 final case class ListingRecord(
@@ -130,14 +136,16 @@ final case class CreatePropertyRequest(
     accommodationType: Option[String],
     bedrooms: Int,
     sleeps: Int,
-    minStayDays: Option[Int]
+    minStayDays: Option[Int],
+    address: Option[NormalizedAddress] = None
 )
 final case class UpdatePropertyRequest(
     accommodationType: String,
     bedrooms: Int,
     sleeps: Int,
     minStayDays: Int,
-    cleaningFeeCents: Option[Long]
+    cleaningFeeCents: Option[Long],
+    address: Option[NormalizedAddress] = None
 )
 final case class AddListingRequest(platform: String, externalId: String, cleaningFeeCents: Option[Long])
 final case class UpdateListingRequest(showInSearch: Boolean)
@@ -221,7 +229,10 @@ final case class HostProperty(
     listings: List[PublicListing],
     availability: List[AvailabilityCreated],
     calendars: List[ExternalCalendarView],
-    unavailability: List[UnavailabilityView]
+    unavailability: List[UnavailabilityView],
+    countryCode: String,
+    country: String,
+    address: Option[NormalizedAddress]
 )
 
 final case class HostDashboard(
@@ -238,7 +249,10 @@ final case class PropertyCreated(
     sleeps: Int,
     minStayDays: Int,
     cleaningFeeCents: Option[Long],
-    createdAt: String
+    createdAt: String,
+    countryCode: String,
+    country: String,
+    address: Option[NormalizedAddress]
 )
 
 final case class ListingCreated(

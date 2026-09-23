@@ -1,7 +1,7 @@
 package com.parrot669.domain
 
-/** Autocomplete suggestion only; not persisted on Property yet.
-  * Broad suggestions can lack country/city components; do not invent them.
+/** Shared autocomplete/property DTO. Broad suggestions can lack country/city;
+  * PropertyAddress validation requires those components before persistence.
   */
 final case class NormalizedAddress(
     address: String,

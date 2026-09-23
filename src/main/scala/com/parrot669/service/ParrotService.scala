@@ -69,20 +69,30 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
       case Some(_) => Left(Invalid("accommodationType must be entire_place or private_room"))
     }
 
-  private def validateProperty(req: CreatePropertyRequest): Either[ServiceError, Unit] = {
+  private def validateProperty(req: CreatePropertyRequest): Either[ServiceError, Option[NormalizedAddress]] = {
     val title = normalized(req.title)
     val accommodationType = propertyAccommodationType(req.accommodationType)
     if (title.isEmpty) Left(Invalid("title is required"))
     else if (title.length > 160) Left(Invalid("title is too long"))
-    else if (!normalized(req.city).equalsIgnoreCase("Barcelona")) Left(Invalid("only Barcelona is supported right now"))
+    else if (req.address.isEmpty && !normalized(req.city).equalsIgnoreCase("Barcelona"))
+      Left(Invalid("select an address with a country and city"))
     else if (!accommodationTypes.contains(accommodationType))
       Left(Invalid("accommodationType must be entire_place or private_room"))
     else if (req.bedrooms < 1 || req.bedrooms > 20) Left(Invalid("bedrooms must be between 1 and 20"))
     else if (req.sleeps < 1 || req.sleeps > 40) Left(Invalid("sleeps must be between 1 and 40"))
     else if (req.minStayDays.exists(days => days < 1 || days > 365))
       Left(Invalid("minStayDays must be between 1 and 365"))
-    else Right(())
+    else req.address.traverse(PropertyAddress.validate)
   }
+
+  private def propertyAddress(property: PropertyRecord): Option[NormalizedAddress] =
+    for {
+      address <- property.address
+      latitude <- property.latitude
+      longitude <- property.longitude
+      placeId <- property.placeId
+    } yield NormalizedAddress(address, Some(property.countryCode), Some(property.country),
+      Some(property.city), latitude, longitude, placeId)
 
   private def validateAvailability(
       req: AddAvailabilityRequest
@@ -224,7 +234,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
   ): F[Either[ServiceError, PropertyCreated]] =
     validateProperty(req) match {
       case Left(error) => fail[PropertyCreated](error)
-      case Right(_) =>
+      case Right(address) =>
         authorize(profileId, currentProfileId).flatMap {
           case Left(error) => fail[PropertyCreated](error)
           case Right(_) =>
@@ -236,13 +246,19 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
                   id = id,
                   profileId = profileId,
                   title = normalized(req.title),
-                  city = "Barcelona",
+                  city = address.flatMap(_.city).getOrElse("Barcelona"),
                   accommodationType = propertyAccommodationType(req.accommodationType),
                   bedrooms = req.bedrooms,
                   sleeps = req.sleeps,
                   minStayDays = req.minStayDays.getOrElse(1),
                   cleaningFeeCents = None,
-                  createdAt = createdAt
+                  createdAt = createdAt,
+                  countryCode = address.flatMap(_.countryCode).getOrElse("ES"),
+                  country = address.flatMap(_.country).getOrElse("Spain"),
+                  address = address.map(_.address),
+                  latitude = address.map(_.latitude),
+                  longitude = address.map(_.longitude),
+                  placeId = address.map(_.placeId)
                 )
               )
             } yield PropertyCreated(
@@ -254,7 +270,10 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
               sleeps = saved.sleeps,
               minStayDays = saved.minStayDays,
               cleaningFeeCents = saved.cleaningFeeCents,
-              createdAt = saved.createdAt.toString
+              createdAt = saved.createdAt.toString,
+              countryCode = saved.countryCode,
+              country = saved.country,
+              address = propertyAddress(saved)
             ).asRight[ServiceError]
         }
     }
@@ -265,7 +284,10 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
       req: UpdatePropertyRequest
   ): F[Either[ServiceError, PropertyCreated]] = {
     val accommodationType = normalized(req.accommodationType).toLowerCase
-    if (!accommodationTypes.contains(accommodationType))
+    val address = req.address.traverse(PropertyAddress.validate)
+    if (address.isLeft)
+      fail[PropertyCreated](address.swap.toOption.get)
+    else if (!accommodationTypes.contains(accommodationType))
       fail[PropertyCreated](Invalid("accommodationType must be entire_place or private_room"))
     else if (req.bedrooms < 1 || req.bedrooms > 20)
       fail[PropertyCreated](Invalid("bedrooms must be between 1 and 20"))
@@ -288,7 +310,8 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
                 req.bedrooms,
                 req.sleeps,
                 req.minStayDays,
-                req.cleaningFeeCents
+                req.cleaningFeeCents,
+                address.toOption.flatten
               ).flatMap {
                 case None => fail[PropertyCreated](NotFound("property not found"))
                 case Some(saved) =>
@@ -302,7 +325,10 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
                       sleeps = saved.sleeps,
                       minStayDays = saved.minStayDays,
                       cleaningFeeCents = saved.cleaningFeeCents,
-                      createdAt = saved.createdAt.toString
+                      createdAt = saved.createdAt.toString,
+                      countryCode = saved.countryCode,
+                      country = saved.country,
+                      address = propertyAddress(saved)
                     ).asRight[ServiceError]
                   )
               }
@@ -914,7 +940,10 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
                     listings = listings.filter(_.propertyId == property.id).map(toPublicListing),
                     availability = availability.map(toAvailabilityCreated),
                     calendars = calendars,
-                    unavailability = unavailability.map(toUnavailabilityView)
+                    unavailability = unavailability.map(toUnavailabilityView),
+                    countryCode = property.countryCode,
+                    country = property.country,
+                    address = propertyAddress(property)
                   )
               }
             }.map { hostProperties =>

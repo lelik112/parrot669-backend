@@ -1,60 +1,28 @@
-# Host address autocomplete: next phase
+# Host address autocomplete
 
-Status: plan only. Backend autocomplete is implemented; this change does not add a host UI,
-property address columns or a property write contract.
+Implemented 2026-09-23 in host create/edit forms, replacing the Barcelona-only selector.
 
-## Current boundary
+- A labeled address field uses our authenticated autocomplete endpoint after three
+  characters and a 300ms debounce. Superseded requests are canceled and ignored.
+- Up to five complete suggestions support keyboard arrows/Enter/Escape and touch.
+  Country and city are filled from the selected result; incomplete broad places are
+  excluded with guidance to refine the query.
+- Loading, empty results, retry and provider failures are shown beside the address.
+  Typed text is preserved on failure. An expired session opens the existing login flow.
+- Editing selected text clears the old selection and coordinates until another result
+  is selected. Provider text is rendered as plain text. Geoapify attribution is visible.
+- Country/city/address/coordinates/place ID are saved together on the existing Property
+  using the nested `address` DTO, after backend validation. No new address/city table.
+- Existing records can keep their location without an address; other settings can still
+  be edited. Omitting address during a settings update preserves its stored value.
+- New UI property creation requires selecting an address. The backend still accepts
+  older Barcelona-only create requests for cached/older clients during rollout.
+- Only the authenticated owner receives exact addresses and coordinates. Guest search
+  and location lists stay database-only; no map or guest provider calls were added.
 
-- `GET /api/geocode/autocomplete?q=...` requires the existing `parrot_session` cookie.
-- A trimmed query must have 3–256 characters. Responses are not cached.
-- Success is an array with `address`, `countryCode`, `country`, `city`, `latitude`,
-  `longitude`, `placeId`. Country codes are uppercase. Results use English names
-  consistently, independently of the host page language.
-- Geoapify can return broad places without a city or country. These fields are nullable;
-  the UI must not mistake a continent/state suggestion for a complete property address.
-- `400`: invalid query; `401`: sign in; `503`: unavailable or not configured.
-  All errors use the existing `{ "error": "..." }` envelope. Empty results are `200 []`.
-- Guest country/city lists and availability search continue to read PostgreSQL only.
-
-## UI work
-
-1. Add a labeled **Property address** field to host create/edit forms, with a visible
-   example and an explanation that selecting a suggestion fills country and city.
-   Keep the existing property name separate from the address.
-2. At three characters, debounce requests by about 300 ms. Call our endpoint through
-   the existing same-origin Worker proxy with the session cookie. Cancel superseded
-   requests and ignore stale responses; never call Geoapify directly from the browser.
-3. Render up to five suggestions under the input. Support keyboard arrows, Enter,
-   Escape and appropriate combobox/listbox semantics. Use at least 44px touch targets
-   and a full-width dropdown on mobile. Render provider strings as text, not HTML.
-4. Show loading, no matches and request errors beside the field. A 401 opens the
-   existing sign-in flow. A 503 retains the typed address and allows retry.
-5. On selection, retain the complete normalized DTO in form state, show country/city,
-   and validate that the selected suggestion has the components required by Property.
-   If components are absent, ask the owner to refine the address rather than guessing.
-   Editing the address text clears the prior selection and coordinates/place ID so
-   stale location data cannot be saved with a different address.
-6. Show Geoapify attribution beside the suggestions as appropriate for the configured
-   provider plan; no map is needed.
-
-## Saving requires a separate backend change
-
-Before enabling Save for address data:
-
-- Add nullable address/latitude/longitude/place ID columns to the existing `properties`
-  table with a new additive migration. Keep existing records and availability intact;
-  do not create Address/City/GeoLocation tables.
-- Extend create/update/dashboard DTOs and repository queries to round-trip the selected
-  address plus the existing `country_code`, `country`, `city`. Today country is in the
-  database, while `PropertyRecord`/host writes still need that round-trip implemented.
-- Validate country codes, coordinate ranges, required components and string lengths
-  server-side; retain owner authorization. A browser-submitted DTO is not trusted just
-  because it originally came from autocomplete.
-- Do not geocode on every save or perform any provider lookup during guest search.
-- Keep the full address and precise coordinates out of guest/public responses until
-  the intended public address visibility is explicitly designed.
-- Test create/edit round-trip, clearing/changing selection, unauthorized writes,
-  provider failure, keyboard operation and mobile layout. Verify that saved properties
-  appear in the existing database-derived country/city lists and guest results.
+Validation: component/controller tests cover stale requests, keyboard selection,
+failed lookup retry, create/edit payloads and preservation on validation failure.
+Backend unit tests cover normalization/validation; disposable-database HTTP smoke tests
+cover round-trip, ownership, settings preservation, guest discovery and public privacy.
 
 Provider contract: https://apidocs.geoapify.com/docs/geocoding/address-autocomplete/

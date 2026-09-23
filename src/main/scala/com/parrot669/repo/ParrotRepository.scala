@@ -71,15 +71,18 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
   def createProperty(property: PropertyRecord): F[PropertyRecord] =
     sql"""
       insert into properties (
-        id, profile_id, title, city, city_code, country_code, country, accommodation_type,
-        bedrooms, sleeps, min_stay_days, cleaning_fee_cents, created_at
+        id, profile_id, title, city, country_code, country, accommodation_type,
+        bedrooms, sleeps, min_stay_days, cleaning_fee_cents, created_at,
+        address, latitude, longitude, place_id
       )
       values (
         ${property.id}, ${property.profileId}, ${property.title},
-        ${property.city}, 'barcelona', 'ES', 'Spain', ${property.accommodationType},
-        ${property.bedrooms}, ${property.sleeps}, ${property.minStayDays}, ${property.cleaningFeeCents}, ${property.createdAt}
+        ${property.city}, ${property.countryCode}, ${property.country}, ${property.accommodationType},
+        ${property.bedrooms}, ${property.sleeps}, ${property.minStayDays}, ${property.cleaningFeeCents}, ${property.createdAt},
+        ${property.address}, ${property.latitude}, ${property.longitude}, ${property.placeId}
       )
-      returning id, profile_id, title, city, accommodation_type, bedrooms, sleeps, min_stay_days, cleaning_fee_cents, created_at
+      returning id, profile_id, title, city, accommodation_type, bedrooms, sleeps, min_stay_days, cleaning_fee_cents, created_at,
+                country_code, country, address, latitude, longitude, place_id
     """.query[PropertyRecord].unique.transact(xa)
 
   def propertyOwnerProfileId(propertyId: UUID): F[Option[UUID]] =
@@ -94,7 +97,8 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
       bedrooms: Int,
       sleeps: Int,
       minStayDays: Int,
-      cleaningFeeCents: Option[Long]
+      cleaningFeeCents: Option[Long],
+      address: Option[NormalizedAddress]
   ): F[Option[PropertyRecord]] =
     sql"""
       update properties
@@ -102,10 +106,19 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
           bedrooms = $bedrooms,
           sleeps = $sleeps,
           min_stay_days = $minStayDays,
-          cleaning_fee_cents = $cleaningFeeCents
+          cleaning_fee_cents = $cleaningFeeCents,
+          city = coalesce(${address.flatMap(_.city)}, city),
+          country_code = coalesce(${address.flatMap(_.countryCode)}, country_code),
+          country = coalesce(${address.flatMap(_.country)}, country),
+          address = coalesce(${address.map(_.address)}, address),
+          latitude = coalesce(${address.map(_.latitude)}, latitude),
+          longitude = coalesce(${address.map(_.longitude)}, longitude),
+          place_id = coalesce(${address.map(_.placeId)}, place_id),
+          city_code = case when ${address.isDefined} then null else city_code end
       where id = $propertyId
       returning id, profile_id, title, city, accommodation_type, bedrooms, sleeps,
-                min_stay_days, cleaning_fee_cents, created_at
+                min_stay_days, cleaning_fee_cents, created_at,
+                country_code, country, address, latitude, longitude, place_id
     """.query[PropertyRecord].option.transact(xa)
 
   def propertyCleaningFee(propertyId: UUID): F[Option[Long]] =
@@ -641,7 +654,8 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
 
   def propertiesForProfile(profileId: UUID): F[List[PropertyRecord]] =
     sql"""
-      select id, profile_id, title, city, accommodation_type, bedrooms, sleeps, min_stay_days, cleaning_fee_cents, created_at
+      select id, profile_id, title, city, accommodation_type, bedrooms, sleeps, min_stay_days, cleaning_fee_cents, created_at,
+             country_code, country, address, latitude, longitude, place_id
       from properties
       where profile_id = $profileId
       order by created_at asc
