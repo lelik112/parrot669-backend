@@ -130,7 +130,7 @@ class MessagingSuite extends munit.FunSuite {
         _ <- List(s"/conversations/$id", s"/conversations/$id/messages", "/conversations").traverse_ { path =>
           f.request(Method.GET, path, Some(f.guest)).flatMap { response =>
             assertEquals(response.headers.get(ci"Cache-Control").map(_.head.value), Some("no-store"))
-            response.as[String].map { json =>
+            response.bodyText.compile.string.map { json =>
               assert(!json.contains("@example.test") && !json.contains("private-contact"))
               assert(!json.contains("accountId") && !json.contains("token"))
             }
