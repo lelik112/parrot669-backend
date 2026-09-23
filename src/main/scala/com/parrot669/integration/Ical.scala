@@ -72,31 +72,54 @@ object AirbnbIcal {
     } yield ParsedIcalEvent(uid, summary, from, to)
 
   def parse(raw: String): Either[String, List[ParsedIcalEvent]] = {
-    val lines = unfold(raw)
-    if (!lines.exists(_.trim.equalsIgnoreCase("BEGIN:VCALENDAR")))
+    val lines = unfold(raw).filterNot(_.trim.isEmpty)
+    def isMarker(line: String, marker: String): Boolean = line.trim.equalsIgnoreCase(marker)
+
+    if (!lines.exists(isMarker(_, "BEGIN:VCALENDAR")))
       Left("not an iCalendar document")
+    else if (
+      !lines.headOption.exists(isMarker(_, "BEGIN:VCALENDAR")) ||
+      !lines.lastOption.exists(isMarker(_, "END:VCALENDAR")) ||
+      lines.count(isMarker(_, "BEGIN:VCALENDAR")) != 1 ||
+      lines.count(isMarker(_, "END:VCALENDAR")) != 1
+    )
+      Left("incomplete or malformed iCalendar document")
     else {
       val events = ListBuffer.empty[Vector[String]]
       var current = Vector.empty[String]
       var inEvent = false
+      var error = Option.empty[String]
 
-      lines.foreach { line =>
-        line.trim match {
-          case value if value.equalsIgnoreCase("BEGIN:VEVENT") =>
-            inEvent = true
-            current = Vector.empty
-          case value if value.equalsIgnoreCase("END:VEVENT") && inEvent =>
-            events += current
-            current = Vector.empty
-            inEvent = false
-          case _ if inEvent =>
-            current = current :+ line
-          case _ =>
-            ()
+      // A partial document must never be published as an empty or smaller snapshot.
+      lines.drop(1).dropRight(1).foreach { line =>
+        if (error.isEmpty) {
+          line.trim match {
+            case value if value.equalsIgnoreCase("BEGIN:VEVENT") =>
+              if (inEvent) error = Some("nested VEVENT")
+              else {
+                inEvent = true
+                current = Vector.empty
+              }
+            case value if value.equalsIgnoreCase("END:VEVENT") =>
+              if (!inEvent) error = Some("unexpected END:VEVENT")
+              else {
+                events += current
+                current = Vector.empty
+                inEvent = false
+              }
+            case _ if inEvent =>
+              current = current :+ line
+            case _ =>
+              ()
+          }
         }
       }
 
-      events.toList.traverse(parseEvent)
+      error match {
+        case Some(message) => Left(message)
+        case None if inEvent => Left("unterminated VEVENT")
+        case None => events.toList.traverse(parseEvent)
+      }
     }
   }
 

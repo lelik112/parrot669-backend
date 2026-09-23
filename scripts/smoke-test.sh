@@ -577,6 +577,79 @@ assert len(calendars[0]["reservationBlocks"]) == 1, calendars
 print("Calendar dashboard passed")
 PY
 
+# HTTP success must not turn malformed feed contents into a replacement snapshot.
+cp "$ICAL_DIR/calendar/ical/123456789.ics" "$ICAL_DIR/original.ics"
+for malformed_case in unterminated_event missing_calendar_end; do
+  python3 - "$ICAL_DIR" "$malformed_case" <<'PY'
+from pathlib import Path
+import sys
+
+directory = Path(sys.argv[1])
+original = (directory / "original.ics").read_text()
+if sys.argv[2] == "unterminated_event":
+    malformed = original.split("END:VEVENT", 1)[0] + "END:VCALENDAR\n"
+else:
+    malformed = original.replace("END:VCALENDAR\n", "")
+(directory / "calendar/ical/123456789.ics").write_text(malformed)
+PY
+
+  malformed_sync_json=$(curl --fail --silent -X POST "http://localhost:$HTTP_PORT/api/calendars/$calendar_id/sync" -b "$COOKIE_JAR")
+  malformed_search_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/search?country=ES&city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
+
+  BASELINE_CALENDAR_JSON="$enabled_calendar_json" MALFORMED_SYNC_JSON="$malformed_sync_json" MALFORMED_SEARCH_JSON="$malformed_search_json" python3 - <<'PY'
+import json, os
+
+baseline = json.loads(os.environ["BASELINE_CALENDAR_JSON"])
+current = json.loads(os.environ["MALFORMED_SYNC_JSON"])
+assert current["status"] == "error", current
+assert current["lastError"].startswith("calendar parse failed:"), current
+assert baseline["lastSuccessAt"] is not None, baseline
+for field in ("id", "lastSuccessAt", "reservationBlocks", "platformUnavailableCount", "unknownCount"):
+    assert current[field] == baseline[field], (field, current, baseline)
+assert json.loads(os.environ["MALFORMED_SEARCH_JSON"]) == []
+print("Malformed HTTP-success feed preserves the last good snapshot and reservation search")
+PY
+done
+
+cat >"$ICAL_DIR/calendar/ical/123456789.ics" <<'ICS'
+BEGIN:VCALENDAR
+VERSION:2.0
+END:VCALENDAR
+ICS
+
+empty_sync_json=$(curl --fail --silent -X POST "http://localhost:$HTTP_PORT/api/calendars/$calendar_id/sync" -b "$COOKIE_JAR")
+empty_search_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/search?country=ES&city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
+
+BASELINE_CALENDAR_JSON="$enabled_calendar_json" EMPTY_SYNC_JSON="$empty_sync_json" EMPTY_SEARCH_JSON="$empty_search_json" python3 - "$property_id" <<'PY'
+import json, os, sys
+
+baseline = json.loads(os.environ["BASELINE_CALENDAR_JSON"])
+current = json.loads(os.environ["EMPTY_SYNC_JSON"])
+assert current["status"] == "connected", current
+assert current["lastError"] is None, current
+assert current["lastSuccessAt"] is not None, current
+assert current["lastSuccessAt"] != baseline["lastSuccessAt"], current
+assert current["reservationBlocks"] == [], current
+assert current["platformUnavailableCount"] == 0, current
+assert current["unknownCount"] == 0, current
+search = json.loads(os.environ["EMPTY_SEARCH_JSON"])
+assert [result["propertyId"] for result in search] == [sys.argv[1]], search
+print("A complete empty calendar clears the prior snapshot and reservation block")
+PY
+
+# Restore reservations for the existing transport-failure checks below.
+cp "$ICAL_DIR/original.ics" "$ICAL_DIR/calendar/ical/123456789.ics"
+restored_sync_json=$(curl --fail --silent -X POST "http://localhost:$HTTP_PORT/api/calendars/$calendar_id/sync" -b "$COOKIE_JAR")
+BASELINE_CALENDAR_JSON="$enabled_calendar_json" RESTORED_SYNC_JSON="$restored_sync_json" python3 - <<'PY'
+import json, os
+
+baseline = json.loads(os.environ["BASELINE_CALENDAR_JSON"])
+current = json.loads(os.environ["RESTORED_SYNC_JSON"])
+assert current["status"] == "connected", current
+for field in ("reservationBlocks", "platformUnavailableCount", "unknownCount"):
+    assert current[field] == baseline[field], (field, current, baseline)
+PY
+
 kill "$ICAL_SERVER_PID"
 wait "$ICAL_SERVER_PID" 2>/dev/null || true
 
