@@ -8,6 +8,7 @@ import com.parrot669.db.Database
 import com.parrot669.http.Routes
 import com.parrot669.integration.{LocationIqClient, HttpIcalFetcher}
 import com.parrot669.messaging.{MessagingRepository, MessagingRoutes, MessagingService}
+import com.parrot669.messaging.{EmailNotificationRepository, EmailNotificationWorker, MessageEmailSender}
 import com.parrot669.repo.{AuthRepository, ParrotRepository}
 import com.parrot669.service.{AuthService, EmailSender, EmailVerificationService, GeocodingService, ParrotService, ResendEmailSender}
 import org.http4s.ember.server.EmberServerBuilder
@@ -63,6 +64,10 @@ object Main extends IOApp.Simple {
           .withHttpApp(routes.orNotFound)
           .build
         _ <- Resource.make(calendarSyncLoop(service).start)(_.cancel)
+        _ <- config.resendApiKey.filter(_ => config.environment != "test").fold(Resource.unit[IO]) { key =>
+          val notifications = new EmailNotificationRepository[IO](xa, config.resendFrom, config.publicBaseUrl)
+          Resource.make(new EmailNotificationWorker[IO](notifications, MessageEmailSender.resend[IO](key)).run.start)(_.cancel).void
+        }
       } yield server
 
       resources.useForever

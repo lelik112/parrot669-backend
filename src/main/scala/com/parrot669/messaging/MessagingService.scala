@@ -45,6 +45,10 @@ final class MessagingService[F[_]: Async](repo: MessagingRepository[F]) {
     value.fold(error => Async[F].pure(Left(error)), f)
 
   def settings(actor: UUID): F[MessagingSettings] = repo.settings(actor)
+  def emailSettings(actor: UUID): F[EmailNotificationSettings] = repo.emailSettings(actor)
+  def updateEmailSettings(actor: UUID, value: EmailNotificationSettings): F[Either[ServiceError, EmailNotificationSettings]] =
+    if (Set("en", "es", "ca", "ru").contains(value.language)) repo.updateEmailSettings(actor, value).map(Right(_))
+    else Async[F].pure(Left(Invalid("email language must be en, es, ca or ru")))
   def updateSettings(actor: UUID, value: MessagingSettings): F[MessagingSettings] = repo.updateSettings(actor, value)
   def contactOptions(propertyId: UUID): F[Either[ServiceError, ContactOptions]] = repo.contactOptions(propertyId)
 

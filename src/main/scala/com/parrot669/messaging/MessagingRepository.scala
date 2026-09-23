@@ -86,12 +86,24 @@ final class MessagingRepository[F[_]: Async](xa: Transactor[F]) {
               .query[MessageRecord].unique
             _ <- sql"""update messaging_conversations
               set last_sequence = $next, updated_at = ${saved.createdAt} where id = ${c.id}""".update.run
+            _ <- EmailNotificationRepository.enqueue(c.id,
+              if (actor == c.hostProfileId) c.guestProfileId else c.hostProfileId, next)
           } yield saved
       }
 
   def settings(actor: UUID): F[MessagingSettings] =
     sql"select accepting_new_conversations from messaging_settings where profile_id = $actor"
       .query[Boolean].option.map(v => MessagingSettings(v.getOrElse(false))).transact(xa)
+
+  def emailSettings(actor: UUID): F[EmailNotificationSettings] =
+    sql"select email_enabled, email_language from messaging_settings where profile_id = $actor"
+      .query[EmailNotificationSettings].option.map(_.getOrElse(EmailNotificationSettings(true, "en"))).transact(xa)
+
+  def updateEmailSettings(actor: UUID, value: EmailNotificationSettings): F[EmailNotificationSettings] =
+    sql"""insert into messaging_settings (profile_id, email_enabled, email_language)
+      values ($actor, ${value.enabled}, ${value.language}) on conflict (profile_id) do update
+      set email_enabled = excluded.email_enabled, email_language = excluded.email_language"""
+      .update.run.as(value).transact(xa)
 
   def updateSettings(actor: UUID, value: MessagingSettings): F[MessagingSettings] =
     sql"""insert into messaging_settings (profile_id, accepting_new_conversations)

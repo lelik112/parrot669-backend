@@ -57,6 +57,13 @@ final class MessagingRoutes[F[_]: Async](service: MessagingService[F], auth: Aut
     case req @ GET -> Root / "api" / "messaging" / "settings" =>
       authenticated(req)(ctx => service.settings(ctx.profileId).flatMap(Ok(_)))
 
+    case req @ GET -> Root / "api" / "messaging" / "notification-settings" =>
+      authenticated(req)(ctx => service.emailSettings(ctx.profileId).flatMap(Ok(_)))
+
+    case req @ PUT -> Root / "api" / "messaging" / "notification-settings" =>
+      authenticated(req)(ctx => decode[EmailNotificationSettings](req)(value =>
+        service.updateEmailSettings(ctx.profileId, value).flatMap(respond(_))))
+
     case req @ PUT -> Root / "api" / "messaging" / "settings" =>
       authenticated(req)(ctx => decode[MessagingSettings](req)(value =>
         service.updateSettings(ctx.profileId, value).flatMap(Ok(_))))
