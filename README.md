@@ -1,5 +1,12 @@
 # PARROT 669 backend
 
+## Airbnb calendar control verification
+
+Owners can start a fresh-snapshot check of their connected iCal source. Verification
+retries at +5/+10/+20 minutes and blocks for 24 hours after three failed attempts.
+It is independent of synchronization and confirms an observed availability change,
+not identity or legal property ownership. See [the API, lifecycle, tests and limits](docs/calendar-ownership-verification.md).
+
 ## Internal messaging
 
 Private guest/host conversations are available under `/api/messaging` using

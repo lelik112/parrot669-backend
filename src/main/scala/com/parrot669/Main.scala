@@ -5,6 +5,7 @@ import cats.syntax.all._
 import com.comcast.ip4s.{Host, Port}
 import com.parrot669.config.AppConfig
 import com.parrot669.db.Database
+import com.parrot669.calendarverification.{CalendarVerificationRepository, CalendarVerificationRoutes, CalendarVerificationService}
 import com.parrot669.http.Routes
 import com.parrot669.http.PasswordResetRoutes
 import com.parrot669.repo.PasswordResetRepository
@@ -42,6 +43,7 @@ object Main extends IOApp.Simple {
         authRepo = new AuthRepository[IO](xa)
         icalFetcher = new HttpIcalFetcher[IO](allowLocalhost = config.environment == "test")
         service = new ParrotService[IO](repo, icalFetcher)
+        calendarVerification = CalendarVerificationService.live[IO](new CalendarVerificationRepository[IO](xa), icalFetcher)
         emailSender =
           if (config.environment == "test") EmailSender.noop[IO]
           else
@@ -63,7 +65,8 @@ object Main extends IOApp.Simple {
           config.adminToken,
           secureCookies = config.environment == "prod"
         ).routes <+> new MessagingRoutes[IO](messaging, authService).routes <+>
-          new PasswordResetRoutes[IO](recovery, secureCookies = config.environment == "prod").routes
+          new PasswordResetRoutes[IO](recovery, secureCookies = config.environment == "prod").routes <+>
+          new CalendarVerificationRoutes[IO](calendarVerification, authService).routes
         server <- EmberServerBuilder
           .default[IO]
           .withHost(host)
@@ -71,6 +74,7 @@ object Main extends IOApp.Simple {
           .withHttpApp(routes.orNotFound)
           .build
         _ <- Resource.make(calendarSyncLoop(service).start)(_.cancel)
+        _ <- Resource.make(calendarVerification.run.start)(_.cancel)
         _ <- config.resendApiKey.filter(_ => config.environment != "test").fold(Resource.unit[IO]) { key =>
           val notifications = new EmailNotificationRepository[IO](xa, config.resendFrom, config.publicBaseUrl)
           Resource.make(new EmailNotificationWorker[IO](notifications, MessageEmailSender.resend[IO](key)).run.start)(_.cancel).void
