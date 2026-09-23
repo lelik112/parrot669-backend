@@ -71,14 +71,7 @@ object LocationIqProbe extends IOApp.Simple {
           box <- IO.fromOption(selected.hcursor.get[List[String]]("boundingbox").toOption.filter(_.size == 4))(
             new IllegalStateException("LOCATIONIQ_PROBE city bounds missing"))
           viewbox = List(box(2), box(0), box(3), box(1)).mkString(",")
-          _ <- queries.traverse_(q => request(q, Some("road"), Some(viewbox)))
-          _ <- if (city == "Barcelona") List(
-            ("Barcelona, alf", Some("road"), "native"),
-            ("alf", Some("road"), "es"),
-            ("alfonso el magnanim", Some("road"), "es"),
-            ("Barcelona alf", None, "native")
-          ).traverse_ { case (q, layer, language) => request(q, layer, Some(viewbox), language) }
-            else IO.unit
+          _ <- queries.traverse_(q => request(s"$city, $q", Some("road"), Some(viewbox)))
         } yield ()
       }
       _ <- IO.println("LOCATIONIQ_PROBE complete")
