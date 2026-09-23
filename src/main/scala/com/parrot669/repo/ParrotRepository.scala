@@ -177,6 +177,8 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
       .transact(xa)
 
   def searchAvailable(
+      countryCode: String,
+      city: String,
       requestedFrom: LocalDate,
       requestedTo: LocalDate,
       bedrooms: Int,
@@ -198,7 +200,8 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
           p.min_stay_days
         from properties p
         join profiles pr on pr.id = p.profile_id
-        where p.city_code = 'barcelona'
+        where p.country_code = $countryCode
+          and lower(p.city) = lower($city)
           and p.bedrooms >= $bedrooms
           and p.sleeps >= $sleeps
           and p.min_stay_days <= $stayDays
