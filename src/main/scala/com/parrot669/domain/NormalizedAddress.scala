@@ -1,7 +1,7 @@
 package com.parrot669.domain
 
-/** Shared autocomplete/property DTO. Broad suggestions can lack country/city;
-  * PropertyAddress validation requires those components before persistence.
+/** Shared autocomplete/property DTO. Optional components also support legacy
+  * stored addresses; new selections are checked by PropertyAddress.
   */
 final case class NormalizedAddress(
     address: String,
@@ -10,5 +10,8 @@ final case class NormalizedAddress(
     city: Option[String],
     latitude: Double,
     longitude: Double,
-    placeId: String
+    placeId: String,
+    street: Option[String] = None,
+    houseNumber: Option[String] = None,
+    resultType: Option[String] = None
 )

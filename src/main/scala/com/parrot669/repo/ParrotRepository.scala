@@ -73,16 +73,17 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
       insert into properties (
         id, profile_id, title, city, country_code, country, accommodation_type,
         bedrooms, sleeps, min_stay_days, cleaning_fee_cents, created_at,
-        address, latitude, longitude, place_id
+        address, latitude, longitude, place_id, street, house_number, address_result_type
       )
       values (
         ${property.id}, ${property.profileId}, ${property.title},
         ${property.city}, ${property.countryCode}, ${property.country}, ${property.accommodationType},
         ${property.bedrooms}, ${property.sleeps}, ${property.minStayDays}, ${property.cleaningFeeCents}, ${property.createdAt},
-        ${property.address}, ${property.latitude}, ${property.longitude}, ${property.placeId}
+        ${property.address}, ${property.latitude}, ${property.longitude}, ${property.placeId},
+        ${property.street}, ${property.houseNumber}, ${property.addressResultType}
       )
       returning id, profile_id, title, city, accommodation_type, bedrooms, sleeps, min_stay_days, cleaning_fee_cents, created_at,
-                country_code, country, address, latitude, longitude, place_id
+                country_code, country, address, latitude, longitude, place_id, street, house_number, address_result_type
     """.query[PropertyRecord].unique.transact(xa)
 
   def propertyOwnerProfileId(propertyId: UUID): F[Option[UUID]] =
@@ -114,11 +115,14 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
           latitude = coalesce(${address.map(_.latitude)}, latitude),
           longitude = coalesce(${address.map(_.longitude)}, longitude),
           place_id = coalesce(${address.map(_.placeId)}, place_id),
+          street = coalesce(${address.flatMap(_.street)}, street),
+          house_number = coalesce(${address.flatMap(_.houseNumber)}, house_number),
+          address_result_type = coalesce(${address.flatMap(_.resultType)}, address_result_type),
           city_code = case when ${address.isDefined} then null else city_code end
       where id = $propertyId
       returning id, profile_id, title, city, accommodation_type, bedrooms, sleeps,
                 min_stay_days, cleaning_fee_cents, created_at,
-                country_code, country, address, latitude, longitude, place_id
+                country_code, country, address, latitude, longitude, place_id, street, house_number, address_result_type
     """.query[PropertyRecord].option.transact(xa)
 
   def propertyCleaningFee(propertyId: UUID): F[Option[Long]] =
@@ -655,7 +659,7 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
   def propertiesForProfile(profileId: UUID): F[List[PropertyRecord]] =
     sql"""
       select id, profile_id, title, city, accommodation_type, bedrooms, sleeps, min_stay_days, cleaning_fee_cents, created_at,
-             country_code, country, address, latitude, longitude, place_id
+             country_code, country, address, latitude, longitude, place_id, street, house_number, address_result_type
       from properties
       where profile_id = $profileId
       order by created_at asc

@@ -27,7 +27,10 @@ final case class PropertyRecord(
     address: Option[String],
     latitude: Option[Double],
     longitude: Option[Double],
-    placeId: Option[String]
+    placeId: Option[String],
+    street: Option[String] = None,
+    houseNumber: Option[String] = None,
+    addressResultType: Option[String] = None
 )
 
 final case class ListingRecord(

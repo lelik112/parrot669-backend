@@ -15,8 +15,9 @@ Implemented 2026-09-23 in host create/edit forms, replacing the Barcelona-only s
   using the nested `address` DTO, after backend validation. No new address/city table.
 - Existing records can keep their location without an address; other settings can still
   be edited. Omitting address during a settings update preserves its stored value.
-- New UI property creation requires selecting an address. The backend still accepts
-  older Barcelona-only create requests for cached/older clients during rollout.
+- New property creation and replacement addresses require street, house number and
+  a building/amenity result type in both UI and backend. City-only creates return 400.
+  Historical addresses remain unchanged unless the owner selects a replacement.
 - Only the authenticated owner receives exact addresses and coordinates. Guest search
   and location lists stay database-only; no map or guest provider calls were added.
 

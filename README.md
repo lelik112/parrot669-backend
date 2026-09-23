@@ -2,16 +2,16 @@
 
 ## Owner address autocomplete
 
-`GET /api/geocode/autocomplete?q=Barcelona` requires the existing owner session cookie.
+`GET /api/geocode/autocomplete?q=Carrer%20de%20Mallorca%20401%20Barcelona` requires the existing owner session cookie.
 The query is trimmed and must contain 3–256 characters. The backend calls Geoapify
 with at most five results and returns only:
 
 ```json
-[{"address":"Carrer de Mallorca 401, Barcelona, Spain","countryCode":"ES","country":"Spain","city":"Barcelona","latitude":41.4036,"longitude":2.1744,"placeId":"..."}]
+[{"address":"Carrer de Mallorca 401, Barcelona, Spain","countryCode":"ES","country":"Spain","city":"Barcelona","latitude":41.4036,"longitude":2.1744,"placeId":"...","street":"Carrer de Mallorca","houseNumber":"401","resultType":"building"}]
 ```
 
-`countryCode`, `country` and `city` can be null for broad suggestions; components are
-never guessed. Country codes are uppercase; provider names use English consistently.
+City/street-only suggestions are filtered out. Results need country, city, street,
+house number and a `building` or `amenity` result type; components are never guessed. Country codes are uppercase; provider names use English consistently.
 No matches returns `200 []`. Responses include `Cache-Control: no-store`.
 
 Set optional Railway variable `GEOAPIFY_API_KEY` on the backend service. It stays on
@@ -26,12 +26,16 @@ the selected result through the property API described below.
 
 ## Property addresses — 2026-09-23
 
-`POST /api/properties` and `PUT /api/properties/:id` accept an optional nested `address`
-with the seven autocomplete fields. A saved address must have a country code, country,
-city, valid coordinates and place ID. Strings are trimmed, country codes uppercased,
+`POST /api/properties` requires a nested `address`; `PUT /api/properties/:id` accepts
+it optionally. Both validate the same complete-address contract as autocomplete:
+country code, country, city, street, house number, building/amenity result type,
+valid coordinates and place ID. Strings are trimmed, country codes uppercased,
 and field lengths validated before writing. The nested address is authoritative for
 country/city. Omitting it on update preserves the saved location (including when
-saving minimum stay or cleaning fee). Older Barcelona create requests remain compatible.
+saving minimum stay or cleaning fee). City-only creates, including the old Barcelona
+payload, return 400. V20 stores the new components without changing existing records.
+Validation checks the submitted components; it does not independently confirm property
+existence or ownership, nor re-query Geoapify during saving.
 
 Migration V19 adds nullable address/coordinate/place ID columns and removes the legacy
 Barcelona-only city-code constraint. Existing property locations and availability are
@@ -42,6 +46,12 @@ Guest location lists/search still use PostgreSQL, including newly added cities/c
 The host UI now implements the [address workflow](docs/host-address-ui-plan.md).
 `scripts/test-property-address.py` checks persistence, editing, validation, owner isolation,
 address preservation when saving other settings, guest search and public response privacy.
+
+### Complete-address fix — 2026-09-23
+
+- Reject city-only and street-only locations on create/update and in autocomplete.
+- Preserve historical addresses when an owner changes other property settings.
+- Cover the Minsk city-only regression, missing house numbers and full address round-trips.
 
 ### Geoapify changelog — 2026-09-23
 

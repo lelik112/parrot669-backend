@@ -18,7 +18,7 @@ final class GeocodingService[F[_]: Async](apiKey: Option[String], client: Geoapi
           Async[F].pure(Left(ServiceError.Unavailable("Address autocomplete is not configured")))
         case Some(key) =>
           Async[F].defer(client.autocomplete(text, key)).attempt.map {
-            case Right(addresses) => Right(addresses)
+            case Right(addresses) => Right(addresses.flatMap(PropertyAddress.validate(_).toOption))
             // Do not forward provider bodies/exceptions: they can contain the API key or address.
             case Left(_) => Left(ServiceError.Unavailable("Address autocomplete is temporarily unavailable. Please try again later."))
           }

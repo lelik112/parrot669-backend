@@ -32,14 +32,20 @@ def api(path, method="GET", body=None, cookie=owner, expected=200):
         return json.loads(raw) if raw else None
 
 address = dict(address="10 Rue de Rivoli, Paris", countryCode="fr", country="France",
-    city="Paris", latitude=48.855, longitude=2.36, placeId="ci-paris")
+    city="Paris", latitude=48.855, longitude=2.36, placeId="ci-paris",
+    street="Rue de Rivoli", houseNumber="10", resultType="building")
 payload = dict(title="CI address round-trip", city="Paris", accommodationType="entire_place",
     bedrooms=1, sleeps=2, address=address)
 api("/properties", "POST", payload, cookie="", expected=401)
-for field, value in [("city", None), ("countryCode", "INVALID"), ("latitude", 91), ("placeId", "")]:
+for field, value in [("city", None), ("countryCode", "INVALID"), ("latitude", 91), ("placeId", ""),
+                     ("street", None), ("houseNumber", ""), ("resultType", "city")]:
     invalid = copy.deepcopy(payload)
     invalid["address"][field] = value
     api("/properties", "POST", invalid, expected=400)
+city_only = dict(address="Беларусь, Минск", countryCode="BY", country="Belarus", city="Minsk",
+    latitude=53.9, longitude=27.5667, placeId="ci-minsk", resultType="city")
+api("/properties", "POST", dict(payload, address=city_only), expected=400)
+api("/properties", "POST", dict(payload, address=None, city="Barcelona"), expected=400)
 created = api("/properties", "POST", payload, expected=201)
 property_id = created["id"]
 address["countryCode"] = "FR"
@@ -70,13 +76,16 @@ api(f"/properties/{property_id}", "PUT", settings, cookie=other, expected=404)
 assert api(f"/properties/{property_id}", "PUT", settings)["address"] == address
 assert dashboard_property()["address"] == address
 replacement = dict(address="Calle de Alcalá 42, Madrid", countryCode="ES", country="Spain",
-    city="Madrid", latitude=40.418, longitude=-3.697, placeId="ci-madrid")
+    city="Madrid", latitude=40.418, longitude=-3.697, placeId="ci-madrid",
+    street="Calle de Alcalá", houseNumber="42", resultType="building")
 updated = api(f"/properties/{property_id}", "PUT", dict(settings, address=replacement))
 assert updated["address"] == replacement and updated["city"] == "Madrid"
 assert dashboard_property()["address"] == replacement
 assert any(p["propertyId"] == property_id for p in search("ES", "Madrid"))
 assert all(p["propertyId"] != property_id for p in search("FR", "Paris"))
 api(f"/properties/{property_id}", "PUT", dict(settings, address=dict(replacement, city="")), expected=400)
+api(f"/properties/{property_id}", "PUT", dict(settings, address=city_only), expected=400)
+api(f"/properties/{property_id}", "PUT", dict(settings, address=dict(replacement, houseNumber=None)), expected=400)
 assert dashboard_property()["address"] == replacement
 api(f"/properties/{property_id}", "DELETE", expected=204)
 print("Property address create/edit, preservation, validation, owner authorization, DB search and public privacy passed")

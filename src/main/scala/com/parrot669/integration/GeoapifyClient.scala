@@ -56,6 +56,9 @@ object GeoapifyClient {
       latitude <- cursor.get[Double]("lat")
       longitude <- cursor.get[Double]("lon")
       placeId <- cursor.get[String]("place_id")
+      street <- component("street")
+      houseNumber <- component("housenumber")
+      resultType <- component("result_type")
     } yield NormalizedAddress(
       address,
       countryCode.map(_.toUpperCase(Locale.ROOT)),
@@ -63,7 +66,10 @@ object GeoapifyClient {
       city,
       latitude,
       longitude,
-      placeId
+      placeId,
+      street,
+      houseNumber,
+      resultType
     )
   }
 

@@ -74,8 +74,8 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
     val accommodationType = propertyAccommodationType(req.accommodationType)
     if (title.isEmpty) Left(Invalid("title is required"))
     else if (title.length > 160) Left(Invalid("title is too long"))
-    else if (req.address.isEmpty && !normalized(req.city).equalsIgnoreCase("Barcelona"))
-      Left(Invalid("select an address with a country and city"))
+    else if (req.address.isEmpty)
+      Left(Invalid("select a full address with a street and house number"))
     else if (!accommodationTypes.contains(accommodationType))
       Left(Invalid("accommodationType must be entire_place or private_room"))
     else if (req.bedrooms < 1 || req.bedrooms > 20) Left(Invalid("bedrooms must be between 1 and 20"))
@@ -92,7 +92,8 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
       longitude <- property.longitude
       placeId <- property.placeId
     } yield NormalizedAddress(address, Some(property.countryCode), Some(property.country),
-      Some(property.city), latitude, longitude, placeId)
+      Some(property.city), latitude, longitude, placeId,
+      property.street, property.houseNumber, property.addressResultType)
 
   private def validateAvailability(
       req: AddAvailabilityRequest
@@ -258,7 +259,10 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
                   address = address.map(_.address),
                   latitude = address.map(_.latitude),
                   longitude = address.map(_.longitude),
-                  placeId = address.map(_.placeId)
+                  placeId = address.map(_.placeId),
+                  street = address.flatMap(_.street),
+                  houseNumber = address.flatMap(_.houseNumber),
+                  addressResultType = address.flatMap(_.resultType)
                 )
               )
             } yield PropertyCreated(

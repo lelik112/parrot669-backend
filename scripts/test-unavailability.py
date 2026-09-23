@@ -39,7 +39,10 @@ def request(method, path, body=None, expected=200, who=owner):
         return result
 
 prop = request("POST", "/properties", {"title": "Manual blocks smoke test", "city": "Barcelona",
-    "bedrooms": 1, "sleeps": 2, "accommodationType": "entire_place"}, 201)
+    "bedrooms": 1, "sleeps": 2, "accommodationType": "entire_place",
+    "address": {"address": "Carrer de Mallorca 401, Barcelona, Spain", "countryCode": "ES",
+        "country": "Spain", "city": "Barcelona", "latitude": 41.4036, "longitude": 2.1744,
+        "placeId": "ci-barcelona", "street": "Carrer de Mallorca", "houseNumber": "401", "resultType": "building"}}, 201)
 pid = prop["id"]
 collection = f"/properties/{pid}/unavailability"
 

@@ -224,7 +224,7 @@ test "$legacy_dashboard_alias_status" = "404"
 property_json=$(curl --fail --silent -b "$COOKIE_JAR" \
   -X POST "http://localhost:$HTTP_PORT/api/properties" \
   -H 'content-type: application/json' \
-  -d '{"title":"CI Apartment","city":"Barcelona","accommodationType":"entire_place","bedrooms":2,"sleeps":5}')
+  -d '{"title":"CI Apartment","address":{"address":"Carrer de Mallorca 401, Barcelona, Spain","countryCode":"ES","country":"Spain","city":"Barcelona","latitude":41.4036,"longitude":2.1744,"placeId":"ci-barcelona","street":"Carrer de Mallorca","houseNumber":"401","resultType":"building"},"city":"Barcelona","accommodationType":"entire_place","bedrooms":2,"sleeps":5}')
 
 property_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$property_json")
 
@@ -647,7 +647,7 @@ assert priced == [], priced
 print("Incomplete price behavior passed")
 PY
 
-sort_property_json=$(curl --fail --silent -X POST "http://localhost:$HTTP_PORT/api/properties"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"title":"Budget Apartment","city":"Barcelona","accommodationType":"entire_place","bedrooms":2,"sleeps":4}')
+sort_property_json=$(curl --fail --silent -X POST "http://localhost:$HTTP_PORT/api/properties"   -H 'content-type: application/json'   -b "$COOKIE_JAR"   -d '{"title":"Budget Apartment","address":{"address":"Carrer de Mallorca 401, Barcelona, Spain","countryCode":"ES","country":"Spain","city":"Barcelona","latitude":41.4036,"longitude":2.1744,"placeId":"ci-barcelona","street":"Carrer de Mallorca","houseNumber":"401","resultType":"building"},"city":"Barcelona","accommodationType":"entire_place","bedrooms":2,"sleeps":4}')
 
 sort_property_id=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])' <<<"$sort_property_json")
 

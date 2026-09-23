@@ -10,7 +10,10 @@ object PropertyAddress {
       countryCode = raw.countryCode.map(_.trim.toUpperCase(Locale.ROOT)),
       country = raw.country.map(_.trim),
       city = raw.city.map(_.trim),
-      placeId = raw.placeId.trim
+      placeId = raw.placeId.trim,
+      street = raw.street.map(_.trim),
+      houseNumber = raw.houseNumber.map(_.trim),
+      resultType = raw.resultType.map(_.trim.toLowerCase(Locale.ROOT))
     )
     def present(text: Option[String], max: Int): Boolean =
       text.exists(s => s.nonEmpty && s.length <= max)
@@ -21,6 +24,9 @@ object PropertyAddress {
       Left(ServiceError.Invalid("address countryCode must be a two-letter country code"))
     else if (!present(value.country, 128) || !present(value.city, 120))
       Left(ServiceError.Invalid("select an address with a country and city"))
+    else if (!present(value.street, 256) || !present(value.houseNumber, 64) ||
+             !value.resultType.exists(Set("building", "amenity")))
+      Left(ServiceError.Invalid("select a full address with a street and house number"))
     else if (!value.latitude.isFinite || value.latitude < -90 || value.latitude > 90 ||
              !value.longitude.isFinite || value.longitude < -180 || value.longitude > 180)
       Left(ServiceError.Invalid("address coordinates are invalid"))

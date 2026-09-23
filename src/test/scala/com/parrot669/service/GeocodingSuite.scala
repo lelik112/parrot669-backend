@@ -17,6 +17,7 @@ class GeocodingSuite extends munit.FunSuite {
       "formatted": "Carrer de Mallorca 401, Barcelona, Spain",
       "country_code": "es", "country": "Spain", "city": "Barcelona",
       "lat": 41.4036, "lon": 2.1744, "place_id": "test-place",
+      "street": "Carrer de Mallorca", "housenumber": "401", "result_type": "building",
       "rank": {"confidence": 1}, "datasource": {"name": "not-for-client"}
     }],
     "query": {"apiKey": "provider-secret"}
@@ -58,7 +59,7 @@ class GeocodingSuite extends munit.FunSuite {
     )
   }
 
-  test("maps Geoapify response to only the seven public address fields") {
+  test("maps Geoapify response to only the address fields required by property validation") {
     val result = service(IO.pure(GeoapifyResponse(200, fixture)))
       .autocomplete(Some("Barcelona")).unsafeRunSync().toOption.get
     assertEquals(result.size, 1)
@@ -70,8 +71,11 @@ class GeocodingSuite extends munit.FunSuite {
     assertEquals(address.latitude, 41.4036)
     assertEquals(address.longitude, 2.1744)
     assertEquals(address.placeId, "test-place")
+    assertEquals(address.street, Some("Carrer de Mallorca"))
+    assertEquals(address.houseNumber, Some("401"))
+    assertEquals(address.resultType, Some("building"))
     assertEquals(address.asJson.asObject.get.keys.toSet,
-      Set("address", "countryCode", "country", "city", "latitude", "longitude", "placeId"))
+      Set("address", "countryCode", "country", "city", "latitude", "longitude", "placeId", "street", "houseNumber", "resultType"))
     assert(!result.asJson.noSpaces.contains("secret"))
     assert(!result.asJson.noSpaces.contains("datasource"))
   }
@@ -98,14 +102,16 @@ class GeocodingSuite extends munit.FunSuite {
     assertEquals(calls, 1)
   }
 
-  test("broad suggestions preserve absent address components as null, without guessing a city") {
-    val response = """{"results":[{"formatted":"Europe","lat":50.0,"lon":10.0,"place_id":"continent"}]}"""
+  test("filters city-only and street-only suggestions even when country, city and coordinates exist") {
+    val full = io.circe.parser.parse(fixture).toOption.get.hcursor.downField("results").focus.get.asArray.get.head
+    val city = full.mapObject(_.remove("street").remove("housenumber")
+      .add("formatted", io.circe.Json.fromString("Беларусь, Минск"))
+      .add("result_type", io.circe.Json.fromString("city")))
+    val street = full.mapObject(_.remove("housenumber").add("result_type", io.circe.Json.fromString("street")))
+    val response = io.circe.Json.obj("results" -> io.circe.Json.arr(city, street, full)).noSpaces
     val result = service(IO.pure(GeoapifyResponse(200, response)))
-      .autocomplete(Some("Europe")).unsafeRunSync().toOption.get.head
-    assertEquals(result.city, None)
-    assertEquals(result.countryCode, None)
-    assertEquals(result.country, None)
-    assert(result.asJson.hcursor.downField("city").focus.exists(_.isNull))
+      .autocomplete(Some("address")).unsafeRunSync().toOption.get
+    assertEquals(result.map(_.resultType), List(Some("building")))
   }
 
   test("provider HTTP errors, invalid JSON and timeouts become sanitized unavailable errors") {
