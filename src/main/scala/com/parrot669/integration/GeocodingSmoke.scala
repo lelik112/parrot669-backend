@@ -20,9 +20,8 @@ object GeocodingSmoke extends IOApp.Simple {
     val client = new GeoapifyClient[IO](request => IO.blocking {
       val raw = request.uri().getRawQuery
       val params = raw.split("&").map(_.split("=", 2)).map(p => p(0) -> URLDecoder.decode(p(1), UTF_8)).toMap
-      val outgoing = if (params.get("text").contains("STRUCTURED_ALF")) {
-        java.net.http.HttpRequest.newBuilder(URI.create(request.uri().toString
-          .replace("/autocomplete?", "/search?").replace("text=STRUCTURED_ALF", "street=alf&city=Barcelona&country=Spain")))
+      val outgoing = if (!params.contains("type")) {
+        java.net.http.HttpRequest.newBuilder(URI.create(request.uri().toString.replace("limit=10", "limit=50")))
           .timeout(Duration.ofSeconds(8)).GET().build()
       } else request
       val response = http.send(outgoing, HttpResponse.BodyHandlers.ofString(UTF_8))
@@ -49,8 +48,9 @@ object GeocodingSmoke extends IOApp.Simple {
         (for {
           cities <- query(GeocodeQuery("barcelona", "city", Some("ES")))
           city <- IO.fromOption(cities.find(_.city.contains("Barcelona")))(new IllegalStateException)
-          _ <- List("alfo", "alfon", "alf*", "carrer alf", "carrer d'alf", "alfons el magnànim", "STRUCTURED_ALF")
-            .traverse_(text => query(GeocodeQuery(text, "street", Some("ES"), Some(city.placeId))))
+          _ <- List("alf", "alfo", "alfons el magnanim")
+            .traverse_(text => query(GeocodeQuery(text, "address", Some("ES"), Some(city.placeId))))
+          _ <- query(GeocodeQuery("d'alf", "street", Some("ES"), Some(city.placeId)))
           service <- GeocodingService.create[IO](Some(apiKey), client)
           result <- service.autocomplete(Some("alf"), Some("street"), Some("ES"), Some(city.placeId))
           _ <- IO.println("GEOCODE_SMOKE: service alf count=" + result.toOption.fold(-1)(_.size))

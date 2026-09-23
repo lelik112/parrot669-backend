@@ -30,6 +30,7 @@ lazy val root = (project in file("."))
       "org.scalameta" %% "munit" % "1.0.4" % Test
     ),
     Compile / run / fork := true,
+    Compile / mainClass := Some("com.parrot669.Main"),
     assembly / mainClass := Some("com.parrot669.Main"),
     assembly / assemblyJarName := "parrot669-backend.jar",
     assembly / assemblyMergeStrategy := {
