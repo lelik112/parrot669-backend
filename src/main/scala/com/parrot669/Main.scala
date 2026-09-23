@@ -45,7 +45,7 @@ object Main extends IOApp.Simple {
               .getOrElse(EmailSender.unconfigured[IO])
         emailVerificationService = new EmailVerificationService[IO](authRepo, emailSender)
         authService = new AuthService[IO](authRepo, emailVerificationService)
-        geocodingService = new GeocodingService[IO](config.geoapifyApiKey, GeoapifyClient.live[IO])
+        geocodingService <- Resource.eval(GeocodingService.create[IO](config.geoapifyApiKey, GeoapifyClient.live[IO]))
         routes = new Routes[IO](
           service,
           authService,

@@ -25,7 +25,7 @@ object PropertyAddress {
     else if (!present(value.country, 128) || !present(value.city, 120))
       Left(ServiceError.Invalid("select an address with a country and city"))
     else if (!present(value.street, 256) || !present(value.houseNumber, 64) ||
-             !value.resultType.exists(Set("building", "amenity")))
+             !value.resultType.exists(Set("street", "building", "amenity")))
       Left(ServiceError.Invalid("select a full address with a street and house number"))
     else if (!value.latitude.isFinite || value.latitude < -90 || value.latitude > 90 ||
              !value.longitude.isFinite || value.longitude < -180 || value.longitude > 180)

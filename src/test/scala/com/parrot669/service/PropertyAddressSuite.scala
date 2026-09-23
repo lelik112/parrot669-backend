@@ -31,7 +31,7 @@ class PropertyAddressSuite extends munit.FunSuite {
       address.copy(houseNumber = None), address.copy(houseNumber = Some(" ")),
       address.copy(houseNumber = Some("x" * 65)),
       address.copy(resultType = None), address.copy(resultType = Some("city")),
-      address.copy(resultType = Some("street")),
+      address.copy(resultType = Some("street"), houseNumber = None),
       address.copy(latitude = 91), address.copy(latitude = Double.NaN),
       address.copy(longitude = -181), address.copy(longitude = Double.PositiveInfinity)
     ).foreach(value => assert(PropertyAddress.validate(value).isLeft))
@@ -42,5 +42,11 @@ class PropertyAddressSuite extends munit.FunSuite {
       Some("Minsk"), 53.9, 27.5667, "minsk-city", resultType = Some("city"))
     assertEquals(PropertyAddress.validate(city),
       Left(ServiceError.Invalid("select a full address with a street and house number")))
+  }
+
+  test("a selected street plus an owner-entered house number is valid without pretending building precision") {
+    val street = address.copy(resultType = Some("street"), houseNumber = Some("40 bis"))
+    assertEquals(PropertyAddress.validate(street).toOption.get.resultType, Some("street"))
+    assert(PropertyAddress.validate(street.copy(houseNumber = Some(" "))).isLeft)
   }
 }

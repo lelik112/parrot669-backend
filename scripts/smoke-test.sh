@@ -149,6 +149,10 @@ python3 - "$HTTP_PORT" "$COOKIE_JAR" <<'PY'
 import http.cookiejar, json, sys, urllib.error, urllib.request
 
 base = "http://localhost:" + sys.argv[1] + "/api/geocode/autocomplete"
+with urllib.request.urlopen(base.replace("autocomplete", "countries"), timeout=10) as response:
+    countries = json.load(response)
+    assert len(countries) > 200 and {"code": "ES", "name": "Spain"} in countries
+    assert response.headers.get("Cache-Control") == "public, max-age=86400"
 jar = http.cookiejar.MozillaCookieJar(sys.argv[2])
 jar.load(ignore_discard=True, ignore_expires=True)
 # Send the host-only localhost session explicitly, as in test-unavailability.py.
@@ -160,6 +164,9 @@ for suffix, authenticated, expected, message in [
     ("?q=%20%20", True, 400, "q is required"),
     ("?q=ab", True, 400, "q must contain between 3 and 256 characters"),
     ("?q=Barcelona", True, 503, "Address autocomplete is not configured"),
+    ("?q=bar&type=city", True, 400, "select a country before searching"),
+    ("?q=alfo&type=street&country=ES", True, 400, "select a city before searching for a street"),
+    ("?q=bar&type=city&country=ES", True, 503, "Address autocomplete is not configured"),
 ]:
     request = urllib.request.Request(base + suffix, headers={"Cookie": session} if authenticated else {})
     try:

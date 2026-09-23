@@ -1,29 +1,29 @@
 # Host address autocomplete
 
-Implemented 2026-09-23 in host create/edit forms, replacing the Barcelona-only selector.
+Updated 2026-09-23: country → city → street → house number.
 
-- A labeled address field uses our authenticated autocomplete endpoint after three
-  characters and a 300ms debounce. Superseded requests are canceled and ignored.
-- Up to five complete suggestions support keyboard arrows/Enter/Escape and touch.
-  Country and city are filled from the selected result; incomplete broad places are
-  excluded with guidance to refine the query.
-- Loading, empty results, retry and provider failures are shown beside the address.
-  Typed text is preserved on failure. An expired session opens the existing login flow.
-- Editing selected text clears the old selection and coordinates until another result
-  is selected. Provider text is rendered as plain text. Geoapify attribution is visible.
-- Country/city/address/coordinates/place ID are saved together on the existing Property
-  using the nested `address` DTO, after backend validation. No new address/city table.
-- Existing records can keep their location without an address; other settings can still
-  be edited. Omitting address during a settings update preserves its stored value.
-- New property creation and replacement addresses require street, house number and
-  a building/amenity result type in both UI and backend. City-only creates return 400.
-  Historical addresses remain unchanged unless the owner selects a replacement.
-- Only the authenticated owner receives exact addresses and coordinates. Guest search
-  and location lists stay database-only; no map or guest provider calls were added.
+- Countries use a built-in ISO list from our backend, with localized names in the
+  browser. They never require a Geoapify call and load once per host page.
+- Cities use autocomplete restricted to the chosen country. Streets use the
+  selected city's provider place ID as a hard boundary, plus the country filter.
+- Street suggestions do not require a house number. The owner enters it separately;
+  this does not spend provider credits or claim that the building was verified.
+- Lookups require 3 characters and a 700ms pause; focusing fields does not send a
+  request. Enter can explicitly search. Up to 10 scoped suggestions are shown.
+- Browser results are cached for 15 minutes (100 entries); server results for 15
+  minutes (512 entries). Identical concurrent server lookups share one provider call.
+  Scope and type are part of the key. Errors are not cached; stale responses are ignored.
+- Changing a country resets city/street/number; changing a city resets street/number.
+  Keyboard navigation, mobile selection, retry and preserved drafts work at each step.
+- Existing saved locations are shown with a Change address action. Until the owner
+  changes the address, settings updates omit it and preserve historical data.
+- POST/PUT still require a full address when setting a new location, including the
+  house number. Street-level coordinates retain resultType=street, not building.
+- Exact addresses remain private to owners; guest search and guest location lists
+  continue to use only PostgreSQL. No new database migration or city table is needed.
 
-Validation: component/controller tests cover stale requests, keyboard selection,
-failed lookup retry, create/edit payloads and preservation on validation failure.
-Backend unit tests cover normalization/validation; disposable-database HTTP smoke tests
-cover round-trip, ownership, settings preservation, guest discovery and public privacy.
+Validation: scoped request and quota-saving tests, mobile blur/click sequencing,
+selection invalidation, cache isolation/expiry/error retry, legacy preservation,
+full property round-trips and guest privacy in disposable-database HTTP checks.
 
 Provider contract: https://apidocs.geoapify.com/docs/geocoding/address-autocomplete/

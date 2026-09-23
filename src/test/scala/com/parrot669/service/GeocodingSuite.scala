@@ -1,6 +1,7 @@
 package com.parrot669.service
 
-import cats.effect.IO
+import cats.effect.{IO, Ref}
+import cats.syntax.all._
 import cats.effect.unsafe.implicits.global
 import com.parrot669.config.AppConfig
 import com.parrot669.integration.{GeoapifyClient, GeoapifyResponse}
@@ -10,6 +11,7 @@ import io.circe.syntax._
 import java.net.URLDecoder
 import java.net.http.HttpTimeoutException
 import java.nio.charset.StandardCharsets.UTF_8
+import scala.concurrent.duration._
 
 class GeocodingSuite extends munit.FunSuite {
   private val fixture = """{
@@ -24,7 +26,7 @@ class GeocodingSuite extends munit.FunSuite {
   }"""
 
   private def service(response: IO[GeoapifyResponse], key: Option[String] = Some("test-secret")) =
-    new GeocodingService[IO](key, new GeoapifyClient[IO](_ => response))
+    GeocodingService.create[IO](key, new GeoapifyClient[IO](_ => response)).unsafeRunSync()
 
   private val mustNotCallProvider = IO.raiseError[GeoapifyResponse](
     new AssertionError("provider should not be called")
@@ -92,11 +94,11 @@ class GeocodingSuite extends munit.FunSuite {
         val pieces = part.split("=", 2)
         pieces(0) -> URLDecoder.decode(pieces(1), UTF_8)
       }.toMap
-      assertEquals(params, Map("text" -> text, "apiKey" -> "test-secret", "format" -> "json", "lang" -> "en", "limit" -> "5"))
+      assertEquals(params, Map("text" -> text.toLowerCase(java.util.Locale.ROOT), "apiKey" -> "test-secret", "format" -> "json", "lang" -> "en", "limit" -> "10", "bias" -> "countrycode:none"))
       assertEquals(request.timeout().get().getSeconds, 8L)
       GeoapifyResponse(200, "{\"results\":[]}")
     })
-    val result = new GeocodingService[IO](Some("test-secret"), client)
+    val result = GeocodingService.create[IO](Some("test-secret"), client).unsafeRunSync()
       .autocomplete(Some(s"  $text  ")).unsafeRunSync()
     assertEquals(result, Right(Nil))
     assertEquals(calls, 1)
@@ -128,5 +130,86 @@ class GeocodingSuite extends munit.FunSuite {
       assertEquals(result, Left(ServiceError.Unavailable("Address autocomplete is temporarily unavailable. Please try again later.")))
       assert(!result.toString.contains("test-secret"))
     }
+  }
+
+  test("country list is local; invalid scopes never call Geoapify") {
+    assert(GeocodingService.countries.size > 200)
+    assert(GeocodingService.countries.exists(c => c.code == "ES" && c.name == "Spain"))
+    val geo = service(mustNotCallProvider)
+    List(
+      geo.autocomplete(Some("bar"), Some("city")),
+      geo.autocomplete(Some("bar"), Some("city"), Some("ES|countrycode:US")),
+      geo.autocomplete(Some("alfo"), Some("street"), Some("ES")),
+      geo.autocomplete(Some("alfo"), Some("street"), Some("ES"), Some("abc|countrycode:US")),
+      geo.autocomplete(Some("bar"), Some("unsupported"), Some("ES"))
+    ).foreach(call => assert(call.unsafeRunSync().left.toOption.exists(_.isInstanceOf[ServiceError.Invalid])))
+  }
+
+  test("city searches stay inside a country; streets use selected city boundary and need no house number") {
+    val cityId = "51f07665660fc4024059dc0a96dfac6c123"
+    val cityJson = """{"results":[{"formatted":"Barcelona, Spain","country_code":"es","country":"Spain","city":"Barcelona","lat":41.39,"lon":2.16,"place_id":"51f07665660fc4024059dc0a96dfac6c123","result_type":"city"}]}"""
+    val streetJson = """{"results":[{"formatted":"Carrer d'Alfons el Magnànim, Barcelona, Spain","country_code":"es","country":"Spain","city":"Barcelona","lat":41.42,"lon":2.22,"place_id":"street-alfons","street":"Carrer d'Alfons el Magnànim","result_type":"street"}]}"""
+    val client = new GeoapifyClient[IO](request => IO {
+      val params = request.uri().getRawQuery.split("&").map { part =>
+        val p = part.split("=", 2); p(0) -> URLDecoder.decode(p(1), UTF_8)
+      }.toMap
+      assertEquals(params("limit"), "10")
+      assertEquals(params("bias"), "countrycode:none")
+      if (params("type") == "city") {
+        assertEquals(params("filter"), "countrycode:es")
+        GeoapifyResponse(200, cityJson)
+      } else {
+        assertEquals(params("type"), "street")
+        assertEquals(params("text"), "alfo")
+        assertEquals(params("filter"), "countrycode:es|place:" + cityId)
+        GeoapifyResponse(200, streetJson)
+      }
+    })
+    val geo = GeocodingService.create[IO](Some("test-secret"), client).unsafeRunSync()
+    assertEquals(geo.autocomplete(Some("bar"), Some("city"), Some("ES")).unsafeRunSync().toOption.get.head.city, Some("Barcelona"))
+    val streets = geo.autocomplete(Some("alfo"), Some("street"), Some("ES"), Some(cityId)).unsafeRunSync().toOption.get
+    assertEquals(streets.map(_.street), List(Some("Carrer d'Alfons el Magnànim")))
+    assertEquals(streets.head.houseNumber, None)
+  }
+
+  test("simultaneous and repeated normalized queries share one provider request") {
+    (for {
+      calls <- Ref.of[IO, Int](0)
+      client = new GeoapifyClient[IO](_ => calls.update(_ + 1) *> IO.sleep(30.millis).as(GeoapifyResponse(200, fixture)))
+      geo <- GeocodingService.create[IO](Some("key"), client)
+      results <- List.fill(8)(geo.autocomplete(Some("  Barcelona  "))).parSequence
+      again <- geo.autocomplete(Some("barcelona"))
+      count <- calls.get
+    } yield {
+      assertEquals(count, 1)
+      assert(results.forall(_ == again))
+      assert(again.toOption.get.nonEmpty)
+    }).unsafeRunSync()
+  }
+
+  test("cache separates scope, bounds memory, expires and never retains provider errors") {
+    (for {
+      calls <- Ref.of[IO, Int](0)
+      client = new GeoapifyClient[IO](_ => calls.updateAndGet(_ + 1).map(n =>
+        if (n == 1) GeoapifyResponse(503, "unavailable") else GeoapifyResponse(200, "{\"results\":[]}")))
+      geo <- GeocodingService.create[IO](Some("key"), client, 1.hour, 1)
+      failed <- geo.autocomplete(Some("bar"), Some("city"), Some("ES"))
+      _ <- geo.autocomplete(Some("bar"), Some("city"), Some("ES"))
+      _ <- geo.autocomplete(Some("bar"), Some("city"), Some("ES"))
+      afterRetry <- calls.get
+      _ <- geo.autocomplete(Some("bar"), Some("city"), Some("FR"))
+      _ <- geo.autocomplete(Some("bar"), Some("city"), Some("ES"))
+      afterEviction <- calls.get
+      expiring <- GeocodingService.create[IO](Some("key"), client, 20.millis)
+      _ <- expiring.autocomplete(Some("bar"), Some("city"), Some("ES"))
+      _ <- IO.sleep(40.millis)
+      _ <- expiring.autocomplete(Some("bar"), Some("city"), Some("ES"))
+      afterExpiry <- calls.get
+    } yield {
+      assert(failed.isLeft)
+      assertEquals(afterRetry, 2)
+      assertEquals(afterEviction, 4)
+      assertEquals(afterExpiry, 6)
+    }).unsafeRunSync()
   }
 }

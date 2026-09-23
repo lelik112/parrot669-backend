@@ -77,7 +77,7 @@ assert api(f"/properties/{property_id}", "PUT", settings)["address"] == address
 assert dashboard_property()["address"] == address
 replacement = dict(address="Calle de Alcalá 42, Madrid", countryCode="ES", country="Spain",
     city="Madrid", latitude=40.418, longitude=-3.697, placeId="ci-madrid",
-    street="Calle de Alcalá", houseNumber="42", resultType="building")
+    street="Calle de Alcalá", houseNumber="42", resultType="street")
 updated = api(f"/properties/{property_id}", "PUT", dict(settings, address=replacement))
 assert updated["address"] == replacement and updated["city"] == "Madrid"
 assert dashboard_property()["address"] == replacement

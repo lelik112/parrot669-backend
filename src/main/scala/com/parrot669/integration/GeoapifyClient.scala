@@ -2,7 +2,7 @@ package com.parrot669.integration
 
 import cats.effect.Async
 import cats.syntax.all._
-import com.parrot669.domain.NormalizedAddress
+import com.parrot669.domain.{GeocodeQuery, NormalizedAddress}
 import io.circe.Decoder
 import io.circe.parser.decode
 
@@ -17,14 +17,19 @@ final case class GeoapifyResponse(status: Int, body: String)
 final class GeoapifyClient[F[_]: Async](send: HttpRequest => F[GeoapifyResponse]) {
   import GeoapifyClient._
 
-  def autocomplete(text: String, apiKey: String): F[List[NormalizedAddress]] = {
-    val query = List(
-      "text" -> text,
+  def autocomplete(lookup: GeocodeQuery, apiKey: String): F[List[NormalizedAddress]] = {
+    val filters = lookup.countryCode.map(code => s"countrycode:${code.toLowerCase(Locale.ROOT)}").toList ++
+      lookup.cityPlaceId.map(id => s"place:$id").toList
+    val scoped = Option.when(lookup.kind != "address")("type" -> lookup.kind).toList ++
+      Option.when(filters.nonEmpty)("filter" -> filters.mkString("|")).toList
+    val query = (List(
+      "text" -> lookup.text,
       "format" -> "json",
       "lang" -> "en",
-      "limit" -> "5",
+      "bias" -> "countrycode:none",
+      "limit" -> "10",
       "apiKey" -> apiKey
-    ).map { case (key, value) => s"$key=${URLEncoder.encode(value, UTF_8)}" }.mkString("&")
+    ) ++ scoped).map { case (key, value) => s"$key=${URLEncoder.encode(value, UTF_8)}" }.mkString("&")
 
     val request = HttpRequest.newBuilder()
       .uri(URI.create(s"https://api.geoapify.com/v1/geocode/autocomplete?$query"))

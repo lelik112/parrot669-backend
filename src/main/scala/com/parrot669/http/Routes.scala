@@ -272,9 +272,13 @@ final class Routes[F[_]: Async](
         }
       }
 
+    case GET -> Root / "api" / "geocode" / "countries" =>
+      Ok(GeocodingService.countries).map(_.putHeaders(Header.Raw(ci"Cache-Control", "public, max-age=86400")))
+
     case request @ GET -> Root / "api" / "geocode" / "autocomplete" =>
       authenticated(request) { _ =>
-        geocodingService.autocomplete(request.uri.query.params.get("q"))
+        val params = request.uri.query.params
+        geocodingService.autocomplete(params.get("q"), params.get("type"), params.get("country"), params.get("cityId"))
           .flatMap(result => respond(result))
       }.map(_.putHeaders(Header.Raw(ci"Cache-Control", "no-store")))
 
