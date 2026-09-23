@@ -14,6 +14,7 @@ import com.parrot669.integration.{LocationIqClient, HttpIcalFetcher}
 import com.parrot669.messaging.{MessagingRepository, MessagingRoutes, MessagingService}
 import com.parrot669.messaging.{EmailNotificationRepository, EmailNotificationWorker, MessageEmailSender}
 import com.parrot669.repo.{AuthRepository, ParrotRepository}
+import com.parrot669.search.{DoobieSearchRepository, SearchRoutes, SearchService}
 import com.parrot669.service.{AuthService, EmailSender, EmailVerificationService, GeocodingService, ParrotService, ResendEmailSender}
 import org.http4s.ember.server.EmberServerBuilder
 import org.slf4j.LoggerFactory
@@ -43,6 +44,7 @@ object Main extends IOApp.Simple {
         authRepo = new AuthRepository[IO](xa)
         icalFetcher = new HttpIcalFetcher[IO](allowLocalhost = config.environment == "test")
         service = new ParrotService[IO](repo, icalFetcher)
+        search = new SearchService[IO](new DoobieSearchRepository[IO](xa))
         calendarVerification = CalendarVerificationService.live[IO](new CalendarVerificationRepository[IO](xa), icalFetcher)
         emailSender =
           if (config.environment == "test") EmailSender.noop[IO]
@@ -64,7 +66,8 @@ object Main extends IOApp.Simple {
           geocodingService,
           config.adminToken,
           secureCookies = config.environment == "prod"
-        ).routes <+> new MessagingRoutes[IO](messaging, authService).routes <+>
+        ).routes <+> new SearchRoutes[IO](search).routes <+>
+          new MessagingRoutes[IO](messaging, authService).routes <+>
           new PasswordResetRoutes[IO](recovery, secureCookies = config.environment == "prod").routes <+>
           new CalendarVerificationRoutes[IO](calendarVerification, authService).routes
         server <- EmberServerBuilder

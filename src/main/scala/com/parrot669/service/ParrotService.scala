@@ -8,7 +8,6 @@ import com.parrot669.integration.{AirbnbIcal, IcalFetcher}
 
 import java.security.SecureRandom
 import java.time.{LocalDate, OffsetDateTime, ZoneId, ZoneOffset}
-import java.time.temporal.ChronoUnit
 import java.util.UUID
 import org.postgresql.util.PSQLException
 import scala.util.Try
@@ -49,13 +48,6 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
 
   private def propertyAccommodationType(raw: Option[String]): String =
     raw.map(value => normalized(value).toLowerCase).filter(_.nonEmpty).getOrElse("entire_place")
-
-  private def searchAccommodationType(raw: Option[String]): Either[ServiceError, Option[String]] =
-    raw.map(value => normalized(value).toLowerCase).filter(_.nonEmpty) match {
-      case None | Some("any") => Right(None)
-      case Some(value) if accommodationTypes.contains(value) => Right(Some(value))
-      case Some(_) => Left(Invalid("accommodationType must be entire_place or private_room"))
-    }
 
   private def validateProperty(req: CreatePropertyRequest): Either[ServiceError, Option[NormalizedAddress]] = {
     val title = normalized(req.title)
@@ -203,18 +195,6 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
     } yield result
 
   def health: F[Boolean] = repo.health
-
-  def locationCountries: F[List[LocationCountry]] =
-    repo.locationCountries
-
-  def locationCities(countryCodeRaw: String): F[Either[ServiceError, List[LocationCity]]] = {
-    val countryCode = normalized(countryCodeRaw).toUpperCase
-
-    if (!countryCode.matches("[A-Z]{2}"))
-      fail[List[LocationCity]](Invalid("country must be a two-letter ISO code"))
-    else
-      repo.locationCities(countryCode).map(_.asRight[ServiceError])
-  }
 
   def createProperty(
       profileId: UUID,
@@ -536,101 +516,6 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
         case false => Left(NotFound("resource not found"))
       }
     }
-
-  def search(
-      countryCodeRaw: String,
-      city: String,
-      fromRaw: String,
-      toRaw: String,
-      bedrooms: Int,
-      sleeps: Int,
-      accommodationTypeRaw: Option[String],
-      pricedOnly: Boolean,
-      minPriceCents: Option[Long],
-      maxPriceCents: Option[Long]
-  ): F[Either[ServiceError, List[SearchResult]]] = {
-    val countryCode = normalized(countryCodeRaw).toUpperCase
-    val normalizedCity = normalized(city)
-
-    val validated =
-      for {
-        _ <- Either.cond(countryCode.matches("[A-Z]{2}"), (), Invalid("country is required and must be a two-letter ISO code"))
-        _ <- Either.cond(normalizedCity.nonEmpty, (), Invalid("city is required"))
-        from <- parseDate(fromRaw, "from")
-        to <- parseDate(toRaw, "to")
-        _ <- Either.cond(to.isAfter(from), (), Invalid("to must be after from; checkout date is exclusive"))
-        _ <- Either.cond(bedrooms >= 1 && bedrooms <= 20, (), Invalid("bedrooms must be between 1 and 20"))
-        _ <- Either.cond(sleeps >= 1 && sleeps <= 40, (), Invalid("sleeps must be between 1 and 40"))
-        _ <- Either.cond(minPriceCents.forall(_ >= 0), (), Invalid("minPriceCents must be non-negative"))
-        _ <- Either.cond(maxPriceCents.forall(_ >= 0), (), Invalid("maxPriceCents must be non-negative"))
-        _ <- Either.cond(
-          (minPriceCents, maxPriceCents) match {
-            case (Some(min), Some(max)) => min <= max
-            case _                      => true
-          },
-          (),
-          Invalid("minPriceCents must be less than or equal to maxPriceCents")
-        )
-        accommodationType <- searchAccommodationType(accommodationTypeRaw)
-        stayDays = ChronoUnit.DAYS.between(from, to).toInt
-      } yield (from, to, stayDays, accommodationType)
-
-    validated match {
-      case Left(error) => fail[List[SearchResult]](error)
-      case Right((from, to, stayDays, accommodationType)) =>
-        val requirePrice = pricedOnly || minPriceCents.isDefined || maxPriceCents.isDefined
-        repo.searchAvailable(countryCode, normalizedCity, from, to, bedrooms, sleeps, stayDays, accommodationType, requirePrice).flatMap { matches =>
-          matches.traverse { item =>
-            (repo.listingsForProperty(item.propertyId), repo.propertyCleaningFee(item.propertyId)).mapN { (listings, cleaningFee) =>
-              val price = item.nightlyTotalCents.map { nightlySubtotal =>
-                PriceEstimate(
-                  currency = "EUR",
-                  nights = stayDays,
-                  nightlySubtotalCents = nightlySubtotal,
-                  cleaningFeeCents = cleaningFee,
-                  estimatedAmountCents = nightlySubtotal + cleaningFee.getOrElse(0L)
-                )
-              }
-
-              SearchResult(
-                propertyId = item.propertyId.toString,
-                propertyTitle = item.propertyTitle,
-                ownerDisplayName = item.ownerDisplayName,
-                city = item.city,
-                accommodationType = item.accommodationType,
-                bedrooms = item.bedrooms,
-                sleeps = item.sleeps,
-                minStayDays = item.minStayDays,
-                availableFrom = item.dateFrom.toString,
-                availableTo = item.dateTo.toString,
-                price = price,
-                links = listings.filter(_.showInSearch).map(toPublicListing)
-              )
-            }
-          }.map { results =>
-            results
-              .filter { result =>
-                result.price match {
-                  case Some(price) =>
-                    minPriceCents.forall(price.estimatedAmountCents >= _) &&
-                    maxPriceCents.forall(price.estimatedAmountCents <= _)
-                  case None =>
-                    minPriceCents.isEmpty && maxPriceCents.isEmpty && !pricedOnly
-                }
-              }
-              .sortBy { result =>
-                (
-                  result.price.fold(1)(_ => 0),
-                  result.price.fold(Long.MaxValue)(_.estimatedAmountCents),
-                  result.propertyTitle.toLowerCase,
-                  result.propertyId
-                )
-              }
-              .asRight[ServiceError]
-          }
-        }
-    }
-  }
 
   def addListing(
       propertyId: UUID,

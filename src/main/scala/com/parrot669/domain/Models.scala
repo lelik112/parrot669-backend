@@ -71,20 +71,6 @@ final case class UnavailabilityView(
     createdAt: String
 )
 
-final case class AvailablePropertyRecord(
-    propertyId: UUID,
-    propertyTitle: String,
-    ownerDisplayName: String,
-    city: String,
-    accommodationType: String,
-    bedrooms: Int,
-    sleeps: Int,
-    minStayDays: Int,
-    dateFrom: LocalDate,
-    dateTo: LocalDate,
-    nightlyTotalCents: Option[Long]
-)
-
 final case class ExternalCalendarRecord(
     id: UUID,
     propertyId: UUID,
@@ -279,29 +265,6 @@ final case class AvailabilityCreated(
     createdAt: String
 )
 
-final case class PriceEstimate(
-    currency: String,
-    nights: Int,
-    nightlySubtotalCents: Long,
-    cleaningFeeCents: Option[Long],
-    estimatedAmountCents: Long
-)
-
-final case class SearchResult(
-    propertyId: String,
-    propertyTitle: String,
-    ownerDisplayName: String,
-    city: String,
-    accommodationType: String,
-    bedrooms: Int,
-    sleeps: Int,
-    minStayDays: Int,
-    availableFrom: String,
-    availableTo: String,
-    price: Option[PriceEstimate],
-    links: List[PublicListing]
-)
-
 final case class ChallengeCreated(
     id: String,
     listingId: String,
@@ -322,7 +285,6 @@ final case class VerificationCreated(
 )
 
 final case class LocationCountry(code: String, name: String)
-final case class LocationCity(countryCode: String, name: String)
 
 final case class ErrorResponse(error: String)
 final case class HealthResponse(ok: Boolean)

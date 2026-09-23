@@ -4,7 +4,6 @@ import cats.effect.Async
 import cats.syntax.all._
 import com.parrot669.domain._
 import com.parrot669.service.{AuthService, GeocodingService, ParrotService, ServiceError}
-import io.circe.Encoder
 import io.circe.generic.auto._
 import org.http4s._
 import org.http4s.circe.CirceEntityCodec._
@@ -59,34 +58,8 @@ final class Routes[F[_]: Async](
   private def parseUuid(raw: String): Either[ServiceError, UUID] =
     Try(UUID.fromString(raw)).toEither.leftMap(_ => ServiceError.Invalid("invalid UUID"))
 
-  private def respondError(error: ServiceError): F[Response[F]] =
-    error match {
-      case ServiceError.Invalid(message) =>
-        BadRequest(ErrorResponse(message))
-      case ServiceError.NotFound(message) =>
-        NotFound(ErrorResponse(message))
-      case ServiceError.Unauthorized(message) =>
-        Async[F].pure(
-          Response[F](status = Status.Unauthorized)
-            .withEntity(ErrorResponse(message))
-        )
-      case ServiceError.Conflict(message) =>
-        Conflict(ErrorResponse(message))
-      case ServiceError.RateLimited(message) =>
-        TooManyRequests(ErrorResponse(message))
-      case ServiceError.Unavailable(message) =>
-        ServiceUnavailable(ErrorResponse(message))
-    }
-
-  private def respond[A: Encoder](
-      result: Either[ServiceError, A],
-      created: Boolean = false
-  ): F[Response[F]] =
-    result match {
-      case Right(value) if created => Created(value)
-      case Right(value)            => Ok(value)
-      case Left(error)             => respondError(error)
-    }
+  private val responses = new HttpResponses[F]
+  import responses.{respond, respondError}
 
   private def decode[A: io.circe.Decoder](request: Request[F])(
       f: A => F[Response[F]]
@@ -281,46 +254,6 @@ final class Routes[F[_]: Async](
         geocodingService.autocomplete(params.get("q"), params.get("type"), params.get("country"), params.get("cityId"), params.get("city"), params.get("bounds"))
           .flatMap(result => respond(result))
       }.map(_.putHeaders(Header.Raw(ci"Cache-Control", "no-store")))
-
-    case GET -> Root / "api" / "locations" / "countries" =>
-      service.locationCountries.flatMap(Ok(_))
-
-    case request @ GET -> Root / "api" / "locations" / "cities" =>
-      service
-        .locationCities(request.uri.query.params.getOrElse("country", ""))
-        .flatMap(result => respond(result))
-
-    case request @ GET -> Root / "api" / "search" =>
-      val params = request.uri.query.params
-      val bedrooms = params.get("bedrooms").fold(Option(1))(_.toIntOption)
-      val sleeps = params.get("sleeps").fold(Option(1))(_.toIntOption)
-      val pricedOnly = params.get("pricedOnly").exists(_.equalsIgnoreCase("true"))
-      val minPriceRaw = params.get("minPriceCents")
-      val maxPriceRaw = params.get("maxPriceCents")
-      val minPriceCents = minPriceRaw.flatMap(_.toLongOption)
-      val maxPriceCents = maxPriceRaw.flatMap(_.toLongOption)
-
-      if (bedrooms.isEmpty) respondError(ServiceError.Invalid("bedrooms must be an integer"))
-      else if (sleeps.isEmpty) respondError(ServiceError.Invalid("sleeps must be an integer"))
-      else if (minPriceRaw.isDefined && minPriceCents.isEmpty)
-        respondError(ServiceError.Invalid("minPriceCents must be an integer"))
-      else if (maxPriceRaw.isDefined && maxPriceCents.isEmpty)
-        respondError(ServiceError.Invalid("maxPriceCents must be an integer"))
-      else
-        service
-          .search(
-            countryCodeRaw = params.getOrElse("country", ""),
-            city = params.getOrElse("city", ""),
-            fromRaw = params.getOrElse("from", ""),
-            toRaw = params.getOrElse("to", ""),
-            bedrooms = bedrooms.get,
-            sleeps = sleeps.get,
-            accommodationTypeRaw = params.get("accommodationType"),
-            pricedOnly = pricedOnly,
-            minPriceCents = minPriceCents,
-            maxPriceCents = maxPriceCents
-          )
-          .flatMap(result => respond(result))
 
     case request @ POST -> Root / "api" / "properties" / propertyIdRaw / "listings" =>
       authenticated(request) { context =>
