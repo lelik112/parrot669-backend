@@ -6,6 +6,7 @@ import com.parrot669.domain.GeocodeQuery
 import com.parrot669.service.GeocodingService
 import io.circe.Json
 import java.net.http.{HttpClient, HttpResponse}
+import java.net.{URI, URLDecoder}
 import java.nio.charset.StandardCharsets.UTF_8
 import java.time.Duration
 
@@ -17,7 +18,16 @@ object GeocodingSmoke extends IOApp.Simple {
     val key = sys.env.get("GEOAPIFY_API_KEY").filter(_.trim.nonEmpty)
     val http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()
     val client = new GeoapifyClient[IO](request => IO.blocking {
-      val response = http.send(request, HttpResponse.BodyHandlers.ofString(UTF_8))
+      val raw = request.uri().getRawQuery
+      val params = raw.split("&").map(_.split("=", 2)).map(p => p(0) -> URLDecoder.decode(p(1), UTF_8)).toMap
+      val outgoing = if (params.get("text").contains("STRUCTURED_ALF")) {
+        java.net.http.HttpRequest.newBuilder(URI.create(request.uri().toString
+          .replace("/autocomplete?", "/search?").replace("text=STRUCTURED_ALF", "street=alf&city=Barcelona&country=Spain")))
+          .timeout(Duration.ofSeconds(8)).GET().build()
+      } else request
+      val response = http.send(outgoing, HttpResponse.BodyHandlers.ofString(UTF_8))
+      val parsed = io.circe.parser.parse(response.body()).toOption.map(_.hcursor.downField("query").downField("parsed"))
+      println("GEOCODE_PARSED " + params.getOrElse("text", "") + " " + parsed.flatMap(_.focus).map(_.noSpaces).getOrElse("none"))
       GeoapifyResponse(response.statusCode(), response.body())
     })
     key match {
@@ -39,8 +49,7 @@ object GeocodingSmoke extends IOApp.Simple {
         (for {
           cities <- query(GeocodeQuery("barcelona", "city", Some("ES")))
           city <- IO.fromOption(cities.find(_.city.contains("Barcelona")))(new IllegalStateException)
-          _ <- List("alf barcelona", "alf, barcelona", "barcelona, alf", "alf, barcelona, spain",
-            "street alf", "calle alf", "alf ", "alfons el magnanim, barcelona")
+          _ <- List("alfo", "alfon", "alf*", "carrer alf", "carrer d'alf", "alfons el magnànim", "STRUCTURED_ALF")
             .traverse_(text => query(GeocodeQuery(text, "street", Some("ES"), Some(city.placeId))))
           service <- GeocodingService.create[IO](Some(apiKey), client)
           result <- service.autocomplete(Some("alf"), Some("street"), Some("ES"), Some(city.placeId))
