@@ -31,19 +31,17 @@ object GeocodingSmoke extends IOApp.Simple {
               "address" -> Json.fromString(v.address), "street" -> v.street.fold(Json.Null)(Json.fromString),
               "city" -> v.city.fold(Json.Null)(Json.fromString),
               "type" -> v.resultType.fold(Json.Null)(Json.fromString),
-              "countryCode" -> v.countryCode.fold(Json.Null)(Json.fromString)
+              "countryCode" -> v.countryCode.fold(Json.Null)(Json.fromString),
+              "latitude" -> Json.fromDoubleOrNull(v.latitude), "longitude" -> Json.fromDoubleOrNull(v.longitude),
+              "placeId" -> Json.fromString(v.placeId)
             )): _*)).noSpaces)
         }
         (for {
           cities <- query(GeocodeQuery("barcelona", "city", Some("ES")))
           city <- IO.fromOption(cities.find(_.city.contains("Barcelona")))(new IllegalStateException)
-          _ <- List(
-            GeocodeQuery("alf", "street", Some("ES"), Some(city.placeId)),
-            GeocodeQuery("alfons", "street", Some("ES"), Some(city.placeId)),
-            GeocodeQuery("carrer d'alf", "street", Some("ES"), Some(city.placeId)),
-            GeocodeQuery("alf", "address", Some("ES"), Some(city.placeId)),
-            GeocodeQuery("alfons el magnanim", "street", Some("ES"), Some(city.placeId))
-          ).traverse_(query)
+          _ <- List("alf barcelona", "alf, barcelona", "barcelona, alf", "alf, barcelona, spain",
+            "street alf", "calle alf", "alf ", "alfons el magnanim, barcelona")
+            .traverse_(text => query(GeocodeQuery(text, "street", Some("ES"), Some(city.placeId))))
           service <- GeocodingService.create[IO](Some(apiKey), client)
           result <- service.autocomplete(Some("alf"), Some("street"), Some("ES"), Some(city.placeId))
           _ <- IO.println("GEOCODE_SMOKE: service alf count=" + result.toOption.fold(-1)(_.size))
