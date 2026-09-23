@@ -72,8 +72,8 @@ class PasswordResetSuite extends munit.FunSuite {
     withDb() { f => for {
       known <- f.http("request", Json.obj("email" -> Json.fromString(email), "language" -> Json.fromString("ru")))
       unknown <- f.http("request", Json.obj("email" -> Json.fromString("unknown@example.test"), "language" -> Json.fromString("ru")))
-      body1 <- known.as[String]
-      body2 <- unknown.as[String]
+      body1 <- known.as[Json]
+      body2 <- unknown.as[Json]
       _ = assertEquals(known.status, Status.Accepted)
       _ = assertEquals(unknown.status, Status.Accepted)
       _ = assertEquals(body1, body2)
