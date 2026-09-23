@@ -9,58 +9,69 @@ hosts explicitly enable new conversations (off by default). See
 the inbox and host opt-in through its Worker; V22 adds participant blocking across
 all properties. Message email notifications remain a separate next step.
 
-## Owner address autocomplete
+## Owner address autocomplete — LocationIQ
 
-`GET /api/geocode/autocomplete?q=Carrer%20de%20Mallorca%20401%20Barcelona` requires the existing owner session cookie.
-The query is trimmed and must contain 3–256 characters. The backend calls Geoapify
-with at most ten results and returns only:
+Owner lookups use LocationIQ through the authenticated
+`GET /api/geocode/autocomplete` endpoint. The API key stays on the backend.
 
-```json
-[{"address":"Carrer de Mallorca 401, Barcelona, Spain","countryCode":"ES","country":"Spain","city":"Barcelona","latitude":41.4036,"longitude":2.1744,"placeId":"...","street":"Carrer de Mallorca","houseNumber":"401","resultType":"building"}]
-```
+1. `type=city&country=ES&q=barcelona` returns city suggestions with `bounds`
+   (`west,south,east,north`) and an opaque `placeId`.
+2. `type=street&country=ES&cityId=<placeId>&city=Barcelona&bounds=<west,south,east,north>&q=alf`
+   searches roads inside the selected city's envelope. Pass the bounds returned
+   with the selected city. The backend sends `q=Barcelona, alf`, `layers=road`,
+   country and viewbox constraints in one provider call.
+3. The owner selects a street and enters a house number separately. Street
+   coordinates describe a road segment, not a provider-verified building.
 
-Use `type=city&country=ES&q=barcelona` for cities, then
-`type=street&country=ES&cityId=<selected-place-id>&city=Barcelona&q=alf` for streets in that city.
-The selected city name is checked as well as its provider boundary: Geoapify can
-return nearby municipalities even with a place filter. Duplicate street segments
-are grouped into one suggestion.
-Street suggestions do not require a house number; the owner enters it separately.
-The legacy default `type=address` still returns only complete addresses.
-Country codes are uppercase; provider names use English consistently.
-No matches returns `200 []`. Responses include `Cache-Control: no-store`.
+The query is trimmed and must contain 3–256 characters. The response includes
+only `address, countryCode, country, city, latitude, longitude, placeId, street,
+houseNumber, resultType, bounds`. Bounds are populated for city suggestions only.
+Country labels use the existing English ISO list; city and street names use their
+native spelling. City identity and geographic bounds are validated; each street
+must also match the selected country/city and lie inside the bounds. A rectangular
+envelope is not an administrative polygon, so result checks remain necessary.
+POIs cannot become street suggestions. Duplicate road segments are grouped before
+returning at most ten suggestions. No matches returns `200 []`; provider 404
+also means no matches. The legacy default `type=address` returns complete addresses.
 
 `GET /api/geocode/countries` returns the built-in ISO country list without a provider
-request or an API key. It is public and cacheable for a day. It is separate from the
-guest `/api/locations/countries` endpoint, which only lists countries in our database.
+request or API key; it is public and cacheable for a day. Guest location lists and
+search continue to query PostgreSQL exclusively.
 
-Successful autocomplete responses (including empty lists) are cached server-side for
-15 minutes, capped at 512 entries. Identical in-flight requests share a lookup. Keys
-include normalized text, type, country and city; errors are evicted. Provider IP-based
-bias is disabled so Railway's location cannot affect results. The UI waits 700ms after
-typing, caches up to 100 queries for 15 minutes, and never searches just because a field
-gained focus. Country and house number input spend no Geoapify credits.
+Successful autocomplete responses, including empty lists, are cached for 15 minutes
+(up to 512 server entries / 100 browser entries). Cache keys include type, country,
+city identity/name and bounds. Concurrent identical requests share one lookup;
+errors are evicted. The UI debounces input by 700ms and does not search on focus.
+Country and manual house-number input spend no provider requests. There is no
+language-specific prefix fallback.
 
-Geoapify's street index misses some partial Catalan names (`alf` versus
-`Carrer d'Alfons…`). After a successful empty city-scoped street lookup in Spain,
-we make at most one fallback with `carrer d'` prefixed to the original text.
-The combined result is cached/coalesced, so this costs at most two provider calls
-per uncached query, not per keystroke. Errors are never retried by this fallback.
-The regression fixture in `src/test/resources/geocoding/` captures public address
-fields from a live provider response, including neighboring-city results.
+The shared LocationIQ client spaces actual request starts by at least 1.1 seconds,
+serializes provider calls, and bounds waiting for a busy client to two seconds.
+This fits the free tier's 2 requests/second and 60/minute for the current single
+backend replica. Multiple replicas sharing a key would require a shared limiter.
+Provider/local quota errors return sanitized 429; the UI preserves input and offers
+retry. Authentication is still required and every lookup response is `no-store`.
 
-Optional live check, with the key already present in the runtime environment:
-`java -cp target/scala-2.13/parrot669-backend.jar com.parrot669.integration.GeocodingSmoke`.
-It uses fixed public queries, writes no database records, and never prints the key.
+Set optional Railway variable `LOCATIONIQ_API_KEY` on the backend service.
+An absent/blank key allows startup and returns
+`503 {"error":"Address autocomplete is not configured"}`.
+Missing/invalid input returns 400; missing/expired sessions return 401. Other
+provider failures/timeouts return sanitized 503. Connect timeout is three seconds,
+HTTP timeout eight seconds, and redirects are not followed. Keys, provider errors
+and request URLs never reach users or logs. Geoapify is no longer called.
 
-Set optional Railway variable `GEOAPIFY_API_KEY` on the backend service. It stays on
-the server and is never included in responses. An absent/blank key does not prevent
-startup: the endpoint returns `503 {"error":"Address autocomplete is not configured"}`.
-Missing/invalid `q` returns 400, a missing/expired session returns 401, and provider
-failures/timeouts return a sanitized 503. Requests have a 3-second connection timeout
-and an 8-second HTTP timeout; provider redirects are not followed.
+The host form displays the free-tier attribution link, **Search by LocationIQ.com**.
+No new tables, property migration, map or street catalog are introduced.
+Existing saved addresses remain unchanged until their owner replaces them.
 
-Autocomplete itself does not write to the database. The host create/edit forms save
-the selected result through the property API described below.
+Verification uses captured public LocationIQ responses from Barcelona, Madrid and
+Paris, mapping/scope/cache/rate-limit tests, and disposable-database HTTP smoke tests.
+Optional read-only live check (two provider calls, then a cached repeat):
+
+`java -cp target/scala-2.13/parrot669-backend.jar com.parrot669.integration.GeocodingSmoke`
+
+It reads the key in-place, checks Barcelona/`alf` through the production service,
+writes no database records and prints only fixed public street names.
 
 ## Property addresses — 2026-09-23
 
@@ -73,7 +84,7 @@ country/city. Omitting it on update preserves the saved location (including when
 saving minimum stay or cleaning fee). City-only creates, including the old Barcelona
 payload, return 400. V20 stores the new components without changing existing records.
 Validation checks the submitted components; it does not independently confirm property
-existence or ownership, nor re-query Geoapify during saving.
+existence or ownership, nor re-query the address provider during saving.
 When the house number is entered independently, resultType remains `street`; saved
 coordinates and place ID refer to the selected street, not a verified building.
 

@@ -13,5 +13,6 @@ final case class NormalizedAddress(
     placeId: String,
     street: Option[String] = None,
     houseNumber: Option[String] = None,
-    resultType: Option[String] = None
+    resultType: Option[String] = None,
+    bounds: Option[GeocodeBounds] = None
 )

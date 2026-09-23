@@ -17,7 +17,7 @@ final case class AppConfig(
     resendApiKey: Option[String],
     resendFrom: String,
     publicBaseUrl: String,
-    geoapifyApiKey: Option[String]
+    locationIqApiKey: Option[String]
 )
 
 object AppConfig {
@@ -83,7 +83,7 @@ object AppConfig {
       resendApiKey = resendApiKey,
       resendFrom = resendFrom,
       publicBaseUrl = publicBaseUrl,
-      geoapifyApiKey = nonEmpty(env, "GEOAPIFY_API_KEY")
+      locationIqApiKey = nonEmpty(env, "LOCATIONIQ_API_KEY")
     )
   }
 }
