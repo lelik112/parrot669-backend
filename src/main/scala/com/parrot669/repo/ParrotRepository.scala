@@ -15,6 +15,21 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
   def health: F[Boolean] =
     sql"select true".query[Boolean].unique.transact(xa)
 
+  def locationCountries: F[List[LocationCountry]] =
+    sql"""
+      select distinct country_code, country
+      from properties
+      order by country asc
+    """.query[LocationCountry].to[List].transact(xa)
+
+  def locationCities(countryCode: String): F[List[LocationCity]] =
+    sql"""
+      select distinct country_code, city
+      from properties
+      where country_code = $countryCode
+      order by city asc
+    """.query[LocationCity].to[List].transact(xa)
+
   def findProfile(profileId: UUID): F[Option[ProfileRecord]] =
     sql"""
       select id, parrot_id, display_name, contact, created_at
@@ -32,12 +47,12 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
   def createProperty(property: PropertyRecord): F[PropertyRecord] =
     sql"""
       insert into properties (
-        id, profile_id, title, city, city_code, accommodation_type,
+        id, profile_id, title, city, city_code, country_code, country, accommodation_type,
         bedrooms, sleeps, min_stay_days, cleaning_fee_cents, created_at
       )
       values (
         ${property.id}, ${property.profileId}, ${property.title},
-        ${property.city}, 'barcelona', ${property.accommodationType},
+        ${property.city}, 'barcelona', 'ES', 'Spain', ${property.accommodationType},
         ${property.bedrooms}, ${property.sleeps}, ${property.minStayDays}, ${property.cleaningFeeCents}, ${property.createdAt}
       )
       returning id, profile_id, title, city, accommodation_type, bedrooms, sleeps, min_stay_days, cleaning_fee_cents, created_at
