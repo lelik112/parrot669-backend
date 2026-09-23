@@ -289,7 +289,12 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
   ): F[Either[ServiceError, PropertyCreated]] = {
     val accommodationType = normalized(req.accommodationType).toLowerCase
     val address = req.address.traverse(PropertyAddress.validate)
-    if (address.isLeft)
+    val title = req.title.map(normalized)
+    if (title.exists(_.isEmpty))
+      fail[PropertyCreated](Invalid("title is required"))
+    else if (title.exists(_.length > 160))
+      fail[PropertyCreated](Invalid("title is too long"))
+    else if (address.isLeft)
       fail[PropertyCreated](address.swap.toOption.get)
     else if (!accommodationTypes.contains(accommodationType))
       fail[PropertyCreated](Invalid("accommodationType must be entire_place or private_room"))
@@ -315,7 +320,8 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
                 req.sleeps,
                 req.minStayDays,
                 req.cleaningFeeCents,
-                address.toOption.flatten
+                address.toOption.flatten,
+                title
               ).flatMap {
                 case None => fail[PropertyCreated](NotFound("property not found"))
                 case Some(saved) =>

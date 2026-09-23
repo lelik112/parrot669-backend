@@ -148,7 +148,8 @@ final case class UpdatePropertyRequest(
     sleeps: Int,
     minStayDays: Int,
     cleaningFeeCents: Option[Long],
-    address: Option[NormalizedAddress] = None
+    address: Option[NormalizedAddress] = None,
+    title: Option[String] = None
 )
 final case class AddListingRequest(platform: String, externalId: String, cleaningFeeCents: Option[Long])
 final case class UpdateListingRequest(showInSearch: Boolean)

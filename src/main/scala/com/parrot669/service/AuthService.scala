@@ -4,8 +4,6 @@ import cats.effect.Async
 import cats.syntax.all._
 import com.parrot669.domain._
 import com.parrot669.repo.AuthRepository
-import de.mkammerer.argon2.Argon2Factory
-import de.mkammerer.argon2.Argon2Factory.Argon2Types
 import org.postgresql.util.PSQLException
 import org.slf4j.LoggerFactory
 
@@ -88,20 +86,10 @@ final class AuthService[F[_]: Async](
   }
 
   private def hashPassword(raw: String): F[String] =
-    Async[F].blocking {
-      val argon2 = Argon2Factory.create(Argon2Types.ARGON2id)
-      val chars = raw.toCharArray
-      try argon2.hash(2, 19456, 1, chars)
-      finally argon2.wipeArray(chars)
-    }
+    PasswordHash.hash[F](raw)
 
   private def verifyPassword(hash: String, raw: String): F[Boolean] =
-    Async[F].blocking {
-      val argon2 = Argon2Factory.create(Argon2Types.ARGON2id)
-      val chars = raw.toCharArray
-      try argon2.verify(hash, chars)
-      finally argon2.wipeArray(chars)
-    }
+    PasswordHash.verify[F](hash, raw)
 
   private def consumeDummyPasswordWork(raw: String): F[Unit] =
     hashPassword(raw).void
@@ -118,7 +106,7 @@ final class AuthService[F[_]: Async](
       username = context.username
     )
 
-  private def createSession(accountId: UUID): F[(String, SessionRecord)] =
+  private def newSession(accountId: UUID): F[(String, SessionRecord)] =
     for {
       id <- uuid
       raw <- randomToken
@@ -131,7 +119,6 @@ final class AuthService[F[_]: Async](
         createdAt = createdAt,
         expiresAt = expiresAt
       )
-      _ <- repo.createSession(session)
     } yield (raw, session)
 
   private def isRateLimited(key: String): Boolean =
@@ -278,11 +265,12 @@ final class AuthService[F[_]: Async](
               for {
                 _ <- Async[F].delay(clearLoginFailures(key))
                 _ <- now.flatMap(repo.deleteExpiredSessions)
-                session <- createSession(account.id)
-                context <- repo.authContextForAccount(account.id)
+                session <- newSession(account.id)
+                inserted <- repo.createSessionIfPasswordCurrent(session._2, account.passwordHash)
+                context <- if (inserted) repo.authContextForAccount(account.id) else Async[F].pure(None)
               } yield context match {
                 case Some(value) => Right(AuthResult(toUser(value), session._1))
-                case None => Left(Unauthorized("account has no host profile"))
+                case None => Left(invalidCredentials)
               }
           }
       }
@@ -303,20 +291,16 @@ final class AuthService[F[_]: Async](
         token <- repo.findEmailVerificationToken(sha256(rawToken))
         result <- token match {
           case Some(value) if value.usedAt.isEmpty && value.expiresAt.isAfter(current) =>
-            repo.consumeEmailVerificationToken(value.id, current).flatMap {
-              case false =>
-                invalidToken
-              case true =>
-                for {
-                  _ <- repo.markEmailVerified(value.accountId)
-                  session <- createSession(value.accountId)
-                  context <- repo.authContextForAccount(value.accountId)
-                } yield context match {
-                  case Some(authContext) =>
-                    Right[ServiceError, AuthResult](AuthResult(toUser(authContext), session._1))
-                  case None =>
-                    Left[ServiceError, AuthResult](Unauthorized("account has no host profile"))
-                }
+            newSession(value.accountId).flatMap { session =>
+              repo.verifyEmailAndCreateSession(value.id, session._2).flatMap {
+                case false => invalidToken
+                case true => repo.authContextForAccount(value.accountId).map {
+                    case Some(authContext) =>
+                      Right[ServiceError, AuthResult](AuthResult(toUser(authContext), session._1))
+                    case None =>
+                      Left[ServiceError, AuthResult](Unauthorized("account has no host profile"))
+                  }
+              }
             }
           case _ =>
             invalidToken
@@ -341,4 +325,7 @@ final class AuthService[F[_]: Async](
 
   def currentUser(context: AuthContext): AuthUser =
     toUser(context)
+
+  def clearAccountLoginFailures(accountId: UUID): F[Unit] =
+    Async[F].delay(clearLoginFailures("account:" + accountId.toString))
 }
