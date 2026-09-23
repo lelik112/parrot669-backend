@@ -167,6 +167,8 @@ for suffix, authenticated, expected, message in [
     ("?q=bar&type=city", True, 400, "select a country before searching"),
     ("?q=alfo&type=street&country=ES", True, 400, "select a city before searching for a street"),
     ("?q=bar&type=city&country=ES", True, 503, "Address autocomplete is not configured"),
+    ("?q=alf&type=street&country=ES&cityId=51f07665660fc4024059dc0a96dfac6c123&city=Barcelona", True, 503, "Address autocomplete is not configured"),
+    ("?q=alf&type=street&country=ES&cityId=51f07665660fc4024059dc0a96dfac6c123&city=", True, 400, "city must contain between 1 and 120 characters"),
 ]:
     request = urllib.request.Request(base + suffix, headers={"Cookie": session} if authenticated else {})
     try:

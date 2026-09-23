@@ -15,11 +15,12 @@ final class GeocodingService[F[_]: Async] private (
   import GeocodingService._
 
   def autocomplete(query: Option[String], kind: Option[String] = None,
-      country: Option[String] = None, cityPlaceId: Option[String] = None
+      country: Option[String] = None, cityPlaceId: Option[String] = None, cityName: Option[String] = None
   ): F[Either[ServiceError, List[NormalizedAddress]]] = {
     val lookup = GeocodeQuery(query.fold("")(_.trim.replaceAll("\\s+", " ")).toLowerCase(Locale.ROOT),
       kind.fold("address")(_.trim.toLowerCase(Locale.ROOT)),
-      country.map(_.trim.toUpperCase(Locale.ROOT)), cityPlaceId.map(_.trim))
+      country.map(_.trim.toUpperCase(Locale.ROOT)), cityPlaceId.map(_.trim),
+      cityName.map(normalizeName))
     validate(lookup) match {
       case Left(error) => Async[F].pure(Left(error))
       case Right(_) => apiKey.map(_.trim).filter(_.nonEmpty) match {
@@ -29,14 +30,30 @@ final class GeocodingService[F[_]: Async] private (
     }
   }
 
+  private def search(lookup: GeocodeQuery, key: String): F[List[NormalizedAddress]] = {
+    def relevant(values: List[NormalizedAddress]) = values.filter(matches(lookup, _))
+    client.autocomplete(lookup, key).map(relevant).flatMap { values =>
+      // Geoapify's street index misses short fragments inside Catalan "Carrer d'…"
+      // names (live regression: alf => [], carrer d'alf => Alfons XII / Magnànim).
+      // One bounded fallback only after a successful empty scoped lookup; the whole
+      // result is memoized below, so retries/focus/concurrent callers share it.
+      if (values.isEmpty && lookup.kind == "street" && lookup.countryCode.contains("ES") &&
+          lookup.cityName.nonEmpty && !lookup.text.startsWith("carrer"))
+        client.autocomplete(lookup.copy(text = "carrer d'" + lookup.text), key).map(relevant)
+      else Async[F].pure(values)
+    }
+  }
+
   private def cached(lookup: GeocodeQuery, key: String): F[Either[ServiceError, List[NormalizedAddress]]] =
     for {
       now <- Async[F].monotonic
       token <- Async[F].delay(new Object)
       // memoize shares simultaneous identical lookups, including cancellation semantics.
-      run <- Async[F].memoize(Async[F].defer(client.autocomplete(lookup, key)).attempt.map {
+      run <- Async[F].memoize(Async[F].defer(search(lookup, key)).attempt.map {
         case Right(values) =>
-          Right(values.filter(matches(lookup, _)).distinctBy(v => (v.placeId, v.street, v.houseNumber))):
+          Right(values.filter(matches(lookup, _)).distinctBy(v =>
+            if (lookup.kind == "street") (v.city.map(normalizeName).getOrElse(""), v.street.map(normalizeName), None)
+            else (v.placeId, v.street, v.houseNumber)).take(10)):
             Either[ServiceError, List[NormalizedAddress]]
         case Left(_) => Left(ServiceError.Unavailable("Address autocomplete is temporarily unavailable. Please try again later."))
       }.flatTap {
@@ -64,6 +81,7 @@ object GeocodingService {
     .map(code => LocationCountry(code, new Locale("", code).getDisplayCountry(Locale.ENGLISH)))
     .sortBy(_.name)
   private val countryCodes = countries.map(_.code).toSet
+  private def normalizeName(value: String): String = value.trim.replaceAll("\\s+", " ").toLowerCase(Locale.ROOT)
 
   def create[F[_]: Async](apiKey: Option[String], client: GeoapifyClient[F],
       cacheTtl: FiniteDuration = 15.minutes, maxEntries: Int = 512): F[GeocodingService[F]] = {
@@ -81,6 +99,8 @@ object GeocodingService {
       invalid("select a country before searching")
     else if (q.cityPlaceId.exists(id => !id.matches("[a-fA-F0-9]{16,2048}")) || (q.kind == "street" && q.cityPlaceId.isEmpty))
       invalid("select a city before searching for a street")
+    else if (q.cityName.exists(name => name.isEmpty || name.length > 120))
+      invalid("city must contain between 1 and 120 characters")
     else Right(())
   }
 
@@ -91,7 +111,8 @@ object GeocodingService {
       v.placeId.nonEmpty && q.countryCode.forall(code => v.countryCode.contains(code))
     located && (q.kind match {
       case "city" => v.resultType.contains("city")
-      case "street" => present(v.street) && v.resultType.exists(Set("street", "building", "amenity"))
+      case "street" => present(v.street) && v.resultType.exists(Set("street", "building", "amenity")) &&
+        q.cityName.forall(name => v.city.exists(city => normalizeName(city) == name))
       case _ => PropertyAddress.validate(v).isRight
     })
   }

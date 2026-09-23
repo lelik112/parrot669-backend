@@ -6,6 +6,11 @@ Updated 2026-09-23: country → city → street → house number.
   browser. They never require a Geoapify call and load once per host page.
 - Cities use autocomplete restricted to the chosen country. Streets use the
   selected city's provider place ID as a hard boundary, plus the country filter.
+- The selected city name is also sent and checked on both backend and frontend;
+  live Geoapify responses include neighboring municipalities despite the place filter.
+  Duplicate street segments are collapsed. An empty Spanish street lookup gets one
+  bounded `carrer d'` fallback for partial Catalan names; its result shares the cache.
+  Live Barcelona `alf` regression and request-count tests cover this provider behavior.
 - Street suggestions do not require a house number. The owner enters it separately;
   this does not spend provider credits or claim that the building was verified.
 - Lookups require 3 characters and a 700ms pause; focusing fields does not send a

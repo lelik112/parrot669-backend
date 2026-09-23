@@ -187,6 +187,61 @@ class GeocodingSuite extends munit.FunSuite {
     }).unsafeRunSync()
   }
 
+  test("street scope filters neighboring cities and groups duplicate street segments") {
+    val full = io.circe.parser.parse(fixture).toOption.get.hcursor.downField("results").focus.get.asArray.get.head
+    val street = full.mapObject(_.remove("housenumber").add("result_type", io.circe.Json.fromString("street")))
+    val neighbor = street.mapObject(_.add("city", io.circe.Json.fromString("Badalona")))
+    val segment = street.mapObject(_.add("place_id", io.circe.Json.fromString("another-segment")))
+    val response = io.circe.Json.obj("results" -> io.circe.Json.arr(neighbor, street, segment)).noSpaces
+    val geo = service(IO.pure(GeoapifyResponse(200, response)))
+    val result = geo.autocomplete(Some("mallorca"), Some("street"), Some("ES"),
+      Some("51f07665660fc4024059dc0a96dfac6c123"), Some("  Barcelona  ")).unsafeRunSync().toOption.get
+    assertEquals(result.size, 1)
+    assertEquals(result.head.city, Some("Barcelona"))
+    assertEquals(result.head.street, Some("Carrer de Mallorca"))
+  }
+
+  test("live Barcelona alf regression: one scoped fallback, no neighbors, and no repeat credits") {
+    val stream = getClass.getResourceAsStream("/geocoding/barcelona-carrer-d-alf.json")
+    val captured = scala.util.Using.resource(scala.io.Source.fromInputStream(stream, "UTF-8"))(_.mkString)
+    var queries = List.empty[String]
+    val client = new GeoapifyClient[IO](request => IO {
+      val params = request.uri().getRawQuery.split("&").map { part =>
+        val p = part.split("=", 2); p(0) -> URLDecoder.decode(p(1), UTF_8)
+      }.toMap
+      queries = queries :+ params("text")
+      assertEquals(params("type"), "street")
+      assertEquals(params("filter"), "countrycode:es|place:51f07665660fc4024059dc0a96dfac6c123")
+      GeoapifyResponse(200, if (params("text") == "carrer d'alf") captured else "{\"results\":[]}")
+    })
+    val geo = GeocodingService.create[IO](Some("secret"), client).unsafeRunSync()
+    def lookup = geo.autocomplete(Some("alf"), Some("street"), Some("ES"),
+      Some("51f07665660fc4024059dc0a96dfac6c123"), Some("Barcelona"))
+    val result = List.fill(4)(lookup).parSequence.unsafeRunSync()
+    assertEquals(queries, List("alf", "carrer d'alf"))
+    assert(result.forall(_ == result.head))
+    assertEquals(result.head.toOption.get.flatMap(_.street),
+      List("Carrer d'Alfons XII", "Carrer d'Alfons el Magnànim", "Carrer d'Alfambra"))
+    assertEquals(lookup.unsafeRunSync(), result.head)
+    assertEquals(queries.size, 2)
+  }
+
+  test("fallback does not retry errors or expand successful, foreign or already prefixed searches") {
+    val scope = Some("51f07665660fc4024059dc0a96dfac6c123")
+    List(
+      ("alf", "ES", 429, "provider error"),
+      ("alf", "ES", 200, fixture),
+      ("alf", "FR", 200, "{\"results\":[]}"),
+      ("carrer d'alf", "ES", 200, "{\"results\":[]}")
+    ).foreach { case (q, country, status, body) =>
+      var calls = 0
+      val client = new GeoapifyClient[IO](_ => IO { calls += 1; GeoapifyResponse(status, body) })
+      val geo = GeocodingService.create[IO](Some("secret"), client).unsafeRunSync()
+      geo.autocomplete(Some(q), Some("street"), Some(country), scope, Some("Barcelona")).unsafeRunSync()
+      assertEquals(calls, 1)
+    }
+  }
+
   test("cache separates scope, bounds memory, expires and never retains provider errors") {
     (for {
       calls <- Ref.of[IO, Int](0)

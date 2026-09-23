@@ -11,7 +11,10 @@ with at most ten results and returns only:
 ```
 
 Use `type=city&country=ES&q=barcelona` for cities, then
-`type=street&country=ES&cityId=<selected-place-id>&q=alfo` for streets inside that city.
+`type=street&country=ES&cityId=<selected-place-id>&city=Barcelona&q=alf` for streets in that city.
+The selected city name is checked as well as its provider boundary: Geoapify can
+return nearby municipalities even with a place filter. Duplicate street segments
+are grouped into one suggestion.
 Street suggestions do not require a house number; the owner enters it separately.
 The legacy default `type=address` still returns only complete addresses.
 Country codes are uppercase; provider names use English consistently.
@@ -27,6 +30,18 @@ include normalized text, type, country and city; errors are evicted. Provider IP
 bias is disabled so Railway's location cannot affect results. The UI waits 700ms after
 typing, caches up to 100 queries for 15 minutes, and never searches just because a field
 gained focus. Country and house number input spend no Geoapify credits.
+
+Geoapify's street index misses some partial Catalan names (`alf` versus
+`Carrer d'Alfons…`). After a successful empty city-scoped street lookup in Spain,
+we make at most one fallback with `carrer d'` prefixed to the original text.
+The combined result is cached/coalesced, so this costs at most two provider calls
+per uncached query, not per keystroke. Errors are never retried by this fallback.
+The regression fixture in `src/test/resources/geocoding/` captures public address
+fields from a live provider response, including neighboring-city results.
+
+Optional live check, with the key already present in the runtime environment:
+`java -cp target/scala-2.13/parrot669-backend.jar com.parrot669.integration.GeocodingSmoke`.
+It uses fixed public queries, writes no database records, and never prints the key.
 
 Set optional Railway variable `GEOAPIFY_API_KEY` on the backend service. It stays on
 the server and is never included in responses. An absent/blank key does not prevent

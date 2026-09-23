@@ -5,5 +5,6 @@ final case class GeocodeQuery(
     text: String,
     kind: String = "address",
     countryCode: Option[String] = None,
-    cityPlaceId: Option[String] = None
+    cityPlaceId: Option[String] = None,
+    cityName: Option[String] = None
 )
