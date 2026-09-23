@@ -46,9 +46,9 @@ final class EmailNotificationRepository[F[_]: Async](xa: Transactor[F], from: St
       error: Option[String], lease: Option[UUID]): ConnectionIO[Unit] =
     (fr"""update messaging_email_jobs set
         due_at = case when pending_sequence > $sequence then
-          greatest(clock_timestamp() + interval '2 minutes',
-            (case when $sent then clock_timestamp() else last_sent_at end) + interval '15 minutes') else null end,
-        last_sent_at = case when $sent then clock_timestamp() else last_sent_at end,
+          greatest(statement_timestamp() + interval '2 minutes',
+            (case when $sent then statement_timestamp() else last_sent_at end) + interval '15 minutes') else null end,
+        last_sent_at = case when $sent then statement_timestamp() else last_sent_at end,
         delivery_id = null, delivery_sequence = null, delivery_payload = null, delivery_email = null,
         started_at = null, attempts = 0, lease_id = null, lease_until = null, last_error = $error
       where conversation_id = $conversation and recipient_profile_id = $actor""" ++
