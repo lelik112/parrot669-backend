@@ -2,11 +2,12 @@
 
 ## Internal messaging
 
-Backend-only guest/host conversations are available under `/api/messaging` using
+Private guest/host conversations are available under `/api/messaging` using
 the existing session cookie. The module is isolated in `com.parrot669.messaging`;
 hosts explicitly enable new conversations (off by default). See
-[the API contract and lifecycle rules](docs/messaging.md). Frontend/Worker wiring
-and message email notifications are a separate next step.
+[the API contract and lifecycle rules](docs/messaging.md). The frontend connects
+the inbox and host opt-in through its Worker; V22 adds participant blocking across
+all properties. Message email notifications remain a separate next step.
 
 ## Owner address autocomplete
 

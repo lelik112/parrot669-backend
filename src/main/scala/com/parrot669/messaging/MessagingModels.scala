@@ -4,7 +4,9 @@ import java.time.{LocalDate, OffsetDateTime}
 import java.util.UUID
 
 final case class MessagingSettings(acceptingNewConversations: Boolean)
-final case class ContactOptions(propertyId: String, acceptingNewConversations: Boolean)
+final case class ContactOptions(propertyId: String, acceptingNewConversations: Boolean,
+    propertyTitle: String, hostProfileId: String, hostDisplayName: String)
+final case class BlockRequest(blocked: Boolean)
 final case class StartConversationRequest(
     propertyId: String,
     clientMessageId: String,
@@ -45,7 +47,9 @@ final case class ConversationView(
     unreadCount: Long,
     lastMessagePreview: String,
     updatedAt: String,
-    canReply: Boolean
+    canReply: Boolean,
+    blockedByMe: Boolean,
+    blockedByOther: Boolean
 )
 final case class ConversationPage(items: List[ConversationView], nextCursor: Option[String])
 final case class MessagePage(items: List[MessageView], nextAfterSequence: Option[Int])
@@ -69,10 +73,11 @@ private[messaging] final case class InboxRecord(
     id: UUID, propertyId: Option[UUID], propertyTitle: String, hostProfileId: UUID,
     guestProfileId: UUID, otherParrotId: String, otherDisplayName: String,
     lastSequence: Int, readThroughSequence: Int, unreadCount: Long,
-    lastMessagePreview: String, updatedAt: OffsetDateTime
+    lastMessagePreview: String, updatedAt: OffsetDateTime, blockedByMe: Boolean, blockedByOther: Boolean
 ) {
   def view: ConversationView = ConversationView(id.toString, propertyId.map(_.toString),
     propertyTitle, hostProfileId.toString, guestProfileId.toString, otherParrotId,
     otherDisplayName, lastSequence, readThroughSequence, unreadCount,
-    lastMessagePreview, updatedAt.toString, canReply = propertyId.isDefined)
+    lastMessagePreview, updatedAt.toString, canReply = propertyId.isDefined && !blockedByMe && !blockedByOther,
+    blockedByMe, blockedByOther)
 }

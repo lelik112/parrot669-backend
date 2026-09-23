@@ -2,11 +2,11 @@
 
 Implemented in `com.parrot669.messaging`: models, routes, service and repository.
 `Main` composes its routes with the existing API. Flyway V21 adds three messaging
-tables; property, address, availability and listing models are unchanged.
+tables; V22 adds participant blocks. Property, address, availability and listing models are unchanged.
 
-This release is backend only. The frontend/Worker proxy and message email
-notifications are not connected yet. Do not display a working "Write to host"
-button until those frontend routes are wired. Existing email verification is unchanged.
+The frontend uses `/messages.html`, a search contact action and a host opt-in
+control, with the same API namespace proxied by the Worker. Message email
+notifications are not connected yet. Existing email verification is unchanged.
 
 ## Access and privacy
 
@@ -19,6 +19,10 @@ button until those frontend routes are wired. Existing email verification is unc
   published external link is not required.
 - One thread per property + guest. Starting again adds to the same thread.
   Turning off new conversations does not prevent existing participants replying.
+- Either participant can block the other **across all properties**. Both lose
+  the ability to send or start new threads together, while history remains readable.
+  Each participant can remove only their own block. A shared PostgreSQL advisory
+  transaction lock serializes sends and block changes for the pair.
 - Only the two participants can list/read/send/acknowledge messages. A stranger
   gets the same 404 as a nonexistent thread. Account emails, raw contacts, exact
   addresses, coordinates and session tokens are never included in messaging DTOs.
@@ -33,14 +37,16 @@ with the same cookie forwarding and Origin protection used by `/api/host/*`.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/contact-options/:propertyId` | `{propertyId, acceptingNewConversations}`; no raw contact |
+| GET | `/contact-options/:propertyId` | `{propertyId, acceptingNewConversations, propertyTitle, hostProfileId, hostDisplayName}`; public labels only |
 | GET / PUT | `/settings` | Read/set `{acceptingNewConversations: boolean}` for the signed-in profile |
 | POST | `/conversations` | Start/reuse a conversation and atomically save its first/new message |
 | GET | `/conversations?limit=20&cursor=...` | Inbox, newest activity first; `{items, nextCursor}` |
 | GET | `/conversations/:id` | Participant-only conversation metadata and unread count |
+| GET | `/conversations/for-property/:propertyId` | Current guest's conversation view or `null`; does not create a thread |
 | GET | `/conversations/:id/messages?afterSequence=0&limit=50` | Ascending history; `{items, nextAfterSequence}` |
 | POST | `/conversations/:id/messages` | Send a message |
 | PUT | `/conversations/:id/read` | Acknowledge `{throughSequence: 42}` |
+| PUT | `/conversations/:id/block` | Set/remove the signed-in participant's block: `{blocked: true/false}` |
 | GET | `/unread` | `{conversations, messages}` counts across all participant threads |
 
 Starting a conversation:
@@ -66,7 +72,8 @@ Successful writes return 200, including retries. Start returns
 `sequence`, `senderProfileId`, `clientMessageId`, `body`, `from`, `to`, `createdAt`.
 The conversation view supplies property ID/title, participant profile IDs, the
 other participant's public PARROT ID/display name, last/read sequences, unread
-count, a 160-character last-message preview, updated time and `canReply`.
+count, a 160-character last-message preview, updated time, `blockedByMe`,
+`blockedByOther` and `canReply` (false if deleted or blocked by either side).
 
 Pagination limits are 1–100. Keep using `nextAfterSequence` while non-null; for
 polling after the final page, pass the highest received sequence. For an initial
@@ -99,7 +106,7 @@ refresh the first page for new activity and deduplicate by conversation ID.
   not consume another allowance. Exceeding a limit returns 429 and rolls back the
   entire write, including a newly created conversation.
 - Errors keep the standard `{error: "..."}` shape: 400 invalid input, 401 missing/
-  invalid session, 404 inaccessible/missing resource, 409 opted-out host, deleted
+  invalid session, 404 inaccessible/missing resource, 409 blocked pair, opted-out host, deleted
   property or reused idempotency key, 429 rate limit.
 
 ## Verification
@@ -109,8 +116,14 @@ PostgreSQL database. The existing CI smoke script already runs `sbt test` with
 `TEST_DATABASE_URL`, then migrates/starts the full application and builds Docker.
 Tests cover participant isolation through HTTP, private-data minimization, opt-in,
 half-open dates, bounded requests, pagination, concurrency across service
-instances, retry idempotency, read races, deletion and rollback under rate limits.
+instances, retry idempotency, read races, deletion, blocks (including another-property
+bypass attempts and concurrent sends) and rollback under rate limits.
 
-Before exposing to broad public traffic, add per-conversation block/report controls
-alongside the UI. Message email notifications belong with the working inbox link;
+Browser integration polls visible conversations every 15 seconds and unread badges
+every 30 seconds. It renders plain text and acknowledges read only when the active
+history is visible, focused and scrolled to the latest received message. Drafts
+and pending idempotency keys are scoped to the account in sessionStorage (24-hour
+expiry), never used as a source of truth for messages. Explicit logout clears drafts.
+
+Abuse reporting/moderation and message email notifications are follow-up work;
 attachments, realtime sockets, public contact publishing and booking are out of scope.

@@ -50,6 +50,20 @@ final class MessagingRepository[F[_]: Async](xa: Transactor[F]) {
         else ().pure[ConnectionIO]
       }
 
+  // Sends and block changes serialize for the participant pair, across all properties.
+  private def lockPair(actor: UUID, other: UUID): ConnectionIO[Unit] = {
+    val key = List(actor.toString, other.toString).sorted.mkString(":")
+    sql"select true from pg_advisory_xact_lock(hashtextextended($key, 669))".query[Boolean].unique.void
+  }
+
+  private def requireUnblocked(actor: UUID, other: UUID): ConnectionIO[Unit] =
+    lockPair(actor, other) *> sql"""select exists(select 1 from messaging_blocks
+      where (blocker_profile_id = $actor and blocked_profile_id = $other)
+         or (blocker_profile_id = $other and blocked_profile_id = $actor))""".query[Boolean].unique.flatMap {
+      case true => reject(Conflict("messaging is blocked between these participants"))
+      case false => ().pure[ConnectionIO]
+    }
+
   private def append(c: ConversationRecord, actor: UUID, message: ValidMessage): ConnectionIO[MessageRecord] =
     (fr"select" ++ messageColumns ++ fr"""from messaging_messages
       where conversation_id = ${c.id} and sender_profile_id = $actor
@@ -61,6 +75,7 @@ final class MessagingRepository[F[_]: Async](xa: Transactor[F]) {
         case None if c.propertyId.isEmpty => reject(Conflict("property was deleted; conversation is read-only"))
         case None =>
           for {
+            _ <- requireUnblocked(actor, if (c.hostProfileId == actor) c.guestProfileId else c.hostProfileId)
             _ <- checkMessageLimit(actor)
             id <- FC.delay(UUID.randomUUID())
             next = c.lastSequence + 1
@@ -86,10 +101,11 @@ final class MessagingRepository[F[_]: Async](xa: Transactor[F]) {
       .update.run.as(value).transact(xa)
 
   def contactOptions(propertyId: UUID): F[Either[ServiceError, ContactOptions]] = result {
-    sql"""select coalesce(s.accepting_new_conversations, false) from properties p
+    sql"""select coalesce(s.accepting_new_conversations, false), p.title, p.profile_id, owner.display_name
+      from properties p join profiles owner on owner.id = p.profile_id
       left join messaging_settings s on s.profile_id = p.profile_id where p.id = $propertyId"""
-      .query[Boolean].option.flatMap(required(_, NotFound("property not found")))
-      .map(ContactOptions(propertyId.toString, _))
+      .query[(Boolean, String, UUID, String)].option.flatMap(required(_, NotFound("property not found")))
+      .map { case (enabled, title, owner, name) => ContactOptions(propertyId.toString, enabled, title, owner.toString, name) }
   }
 
   private[messaging] def start(
@@ -145,7 +161,9 @@ final class MessagingRepository[F[_]: Async](xa: Transactor[F]) {
       (select count(*) from messaging_messages m where m.conversation_id = c.id
         and m.sender_profile_id <> $actor and m.sequence >
           case when c.host_profile_id = $actor then c.host_read_sequence else c.guest_read_sequence end),
-      left(last.body, 160), c.updated_at
+      left(last.body, 160), c.updated_at,
+      exists(select 1 from messaging_blocks b where b.blocker_profile_id = $actor and b.blocked_profile_id = other.id),
+      exists(select 1 from messaging_blocks b where b.blocker_profile_id = other.id and b.blocked_profile_id = $actor)
     from messaging_conversations c
     join profiles other on other.id =
       case when c.host_profile_id = $actor then c.guest_profile_id else c.host_profile_id end
@@ -163,6 +181,22 @@ final class MessagingRepository[F[_]: Async](xa: Transactor[F]) {
   def detail(id: UUID, actor: UUID): F[Either[ServiceError, ConversationView]] = result {
     (inboxSelect(actor) ++ fr"and c.id = $id").query[InboxRecord].option
       .flatMap(required(_, NotFound("conversation not found"))).map(_.view)
+  }
+
+  def forProperty(propertyId: UUID, actor: UUID): F[Option[ConversationView]] =
+    (inboxSelect(actor) ++ fr"and c.property_id = $propertyId and c.guest_profile_id = $actor")
+      .query[InboxRecord].option.map(_.map(_.view)).transact(xa)
+
+  def setBlocked(id: UUID, actor: UUID, blocked: Boolean): F[Either[ServiceError, BlockRequest]] = result {
+    for {
+      c <- conversation(id, actor, lock = false)
+      other = if (c.hostProfileId == actor) c.guestProfileId else c.hostProfileId
+      _ <- lockPair(actor, other)
+      _ <- if (blocked)
+        sql"""insert into messaging_blocks (blocker_profile_id, blocked_profile_id)
+          values ($actor, $other) on conflict do nothing""".update.run
+      else sql"delete from messaging_blocks where blocker_profile_id = $actor and blocked_profile_id = $other".update.run
+    } yield BlockRequest(blocked)
   }
 
   def messages(id: UUID, actor: UUID, after: Int, limit: Int): F[Either[ServiceError, MessagePage]] = result {
