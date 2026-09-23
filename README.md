@@ -265,6 +265,36 @@ curl -s -c cookies.txt http://localhost:8080/api/auth/login \
 
 The raw session token is returned only through `Set-Cookie`.
 
+Password recovery is available from both login screens via `/recover.html`.
+`POST /api/auth/password-reset/request` accepts `{email, language?}` and returns
+202 with the same generic message for existing and unknown accounts. No account
+lookup or provider call is made before this response. A bounded background queue
+sends a localized Resend link; per-account database limits allow one request every
+90 seconds and at most three per hour, without invalidating earlier valid links.
+
+`POST /api/auth/password-reset/confirm` accepts `{token, password, language?}`.
+Tokens contain 32 random bytes, are stored only as SHA-256 hashes, expire after
+30 minutes and are single-use. Passwords follow the existing 10–256 character
+policy and Argon2id parameters. A successful reset atomically changes the password,
+verifies possession of the account email, invalidates other recovery/verification
+links and revokes every session. Login and verification lock the same account row
+so an in-flight old credential cannot recreate a session after reset. The user
+logs in normally afterwards; account/profile/property identity is retained.
+
+Recovery URLs put the token in a fragment, not an HTTP query. The page removes it
+from browser history immediately, uses `no-referrer` and never persists it or the
+password in web storage. APIs are `no-store` and bounded to 16 KiB. The existing
+Resend key/from/public URL configuration is reused; no schema change is required.
+The process-local email queue is bounded to 64 requests and is **not durable**:
+a restart or provider failure can require the user to request another link.
+The UI says to check spam and retry if no email arrives; provider failures are
+logged without addresses or tokens. Password-change notices are best effort.
+`APP_ENV=test` uses a no-op sender; integration tests use a recording fake sender.
+
+Existing properties accept an optional `title` in the settings PUT. It is trimmed,
+validated to 1–160 characters and preserved when omitted by older clients. Owner
+checks still apply; address, availability and external integrations are retained.
+
 Authentication integration tests use isolated schemas in an explicitly configured test PostgreSQL database:
 
 ```bash
@@ -404,7 +434,7 @@ Flyway migrations live in:
 src/main/resources/db/migration/
 ```
 
-The schema is additive through V12. V11 adds `accounts`, server-side `sessions`, account/profile ownership and reserved `password_reset_tokens` storage. V12 removes the pre-account edit-token mechanism, deletes any remaining unowned legacy profiles, makes `profiles.account_id` mandatory and drops `access_token_hash`.
+The schema is additive through V12. V11 adds `accounts`, server-side `sessions`, account/profile ownership and `password_reset_tokens` storage (now used by password recovery). V12 removes the pre-account edit-token mechanism, deletes any remaining unowned legacy profiles, makes `profiles.account_id` mandatory and drops `access_token_hash`.
 
 Do not rewrite already-applied migrations. Flyway remembers checksums and will quite reasonably complain when humans attempt time travel.
 
@@ -430,10 +460,8 @@ This shape is convenient for Railway/Fly.io/a small VM. Point `DATABASE_URL`, `D
 
 ## What is intentionally not here yet
 
-- password-reset email delivery (the V11 reset-token table is reserved, but no fake recovery flow is exposed);
 - OAuth;
 - general RBAC/roles;
-- messaging;
 - booking/payment flow;
 - reviews;
 - automatic Airbnb scraping;
@@ -444,7 +472,7 @@ This shape is convenient for Railway/Fly.io/a small VM. Point `DATABASE_URL`, `D
 
 ## Next sensible backend steps
 
-1. Connect a real email provider and add password-reset request/confirm endpoints.
+1. Add recovery email delivery metrics and retry handling if operational traffic requires them.
 2. Add `identity` and `right_to_rent` as separate claims, never as a generic `verified=true`.
 3. Add an admin UI or tiny internal endpoint to list pending challenges.
 4. Replace the simple in-process login limiter only if traffic or horizontal scaling makes a distributed limiter worth the complexity.

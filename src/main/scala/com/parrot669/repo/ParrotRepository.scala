@@ -99,11 +99,13 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
       sleeps: Int,
       minStayDays: Int,
       cleaningFeeCents: Option[Long],
-      address: Option[NormalizedAddress]
+      address: Option[NormalizedAddress],
+      title: Option[String] = None
   ): F[Option[PropertyRecord]] =
     sql"""
       update properties
-      set accommodation_type = $accommodationType,
+      set title = coalesce($title, title),
+          accommodation_type = $accommodationType,
           bedrooms = $bedrooms,
           sleeps = $sleeps,
           min_stay_days = $minStayDays,

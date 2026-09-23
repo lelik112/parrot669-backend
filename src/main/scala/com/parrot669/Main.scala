@@ -6,6 +6,9 @@ import com.comcast.ip4s.{Host, Port}
 import com.parrot669.config.AppConfig
 import com.parrot669.db.Database
 import com.parrot669.http.Routes
+import com.parrot669.http.PasswordResetRoutes
+import com.parrot669.repo.PasswordResetRepository
+import com.parrot669.service.{PasswordResetEmailSender, PasswordResetService}
 import com.parrot669.integration.{LocationIqClient, HttpIcalFetcher}
 import com.parrot669.messaging.{MessagingRepository, MessagingRoutes, MessagingService}
 import com.parrot669.messaging.{EmailNotificationRepository, EmailNotificationWorker, MessageEmailSender}
@@ -47,6 +50,9 @@ object Main extends IOApp.Simple {
               .getOrElse(EmailSender.unconfigured[IO])
         emailVerificationService = new EmailVerificationService[IO](authRepo, emailSender)
         authService = new AuthService[IO](authRepo, emailVerificationService)
+        recoverySender = if (config.environment == "test") PasswordResetEmailSender.noop[IO]
+          else PasswordResetEmailSender.resend[IO](config.resendApiKey.getOrElse(""), config.resendFrom, config.publicBaseUrl)
+        recovery <- PasswordResetService.resource[IO](new PasswordResetRepository[IO](xa), recoverySender, authService)
         geocodingClient <- Resource.eval(LocationIqClient.live[IO])
         geocodingService <- Resource.eval(GeocodingService.create[IO](config.locationIqApiKey, geocodingClient))
         messaging = new MessagingService[IO](new MessagingRepository[IO](xa))
@@ -56,7 +62,8 @@ object Main extends IOApp.Simple {
           geocodingService,
           config.adminToken,
           secureCookies = config.environment == "prod"
-        ).routes <+> new MessagingRoutes[IO](messaging, authService).routes
+        ).routes <+> new MessagingRoutes[IO](messaging, authService).routes <+>
+          new PasswordResetRoutes[IO](recovery, secureCookies = config.environment == "prod").routes
         server <- EmberServerBuilder
           .default[IO]
           .withHost(host)

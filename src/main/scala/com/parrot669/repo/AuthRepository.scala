@@ -66,14 +66,6 @@ final class AuthRepository[F[_]: Async](xa: Transactor[F]) {
       limit 1
     """.query[EmailVerificationTokenRecord].option.transact(xa)
 
-  def consumeEmailVerificationToken(tokenId: UUID, usedAt: OffsetDateTime): F[Boolean] =
-    sql"""
-      update email_verification_tokens
-      set used_at = $usedAt
-      where id = $tokenId
-        and used_at is null
-    """.update.run.transact(xa).map(_ == 1)
-
   def markEmailVerified(accountId: UUID): F[Unit] =
     sql"""
       update accounts
@@ -81,11 +73,34 @@ final class AuthRepository[F[_]: Async](xa: Transactor[F]) {
       where id = $accountId
     """.update.run.transact(xa).void
 
-  def createSession(session: SessionRecord): F[Unit] =
+  private def insertSession(session: SessionRecord): ConnectionIO[Unit] =
     sql"""
       insert into sessions (id, account_id, token_hash, created_at, expires_at)
       values (${session.id}, ${session.accountId}, ${session.tokenHash}, ${session.createdAt}, ${session.expiresAt})
-    """.update.run.transact(xa).void
+    """.update.run.void
+
+  // Serialize login/verification with password reset: an old password or consumed
+  // verification link cannot create a fresh session after reset revoked sessions.
+  def createSessionIfPasswordCurrent(session: SessionRecord, expectedHash: String): F[Boolean] =
+    (for {
+      current <- sql"select password_hash, email_verified from accounts where id = ${session.accountId} for update"
+        .query[(String, Boolean)].option
+      valid = current.contains((expectedHash, true))
+      _ <- if (valid) insertSession(session) else ().pure[ConnectionIO]
+    } yield valid).transact(xa)
+
+  def verifyEmailAndCreateSession(tokenId: UUID, session: SessionRecord): F[Boolean] =
+    (for {
+      account <- sql"select id from accounts where id = ${session.accountId} for update".query[UUID].option
+      consumed <- if (account.isDefined)
+        sql"""update email_verification_tokens set used_at = clock_timestamp()
+          where id = $tokenId and account_id = ${session.accountId}
+            and used_at is null and expires_at > clock_timestamp()""".update.run
+        else 0.pure[ConnectionIO]
+      _ <- if (consumed == 1)
+        sql"update accounts set email_verified = true where id = ${session.accountId}".update.run.void *> insertSession(session)
+        else ().pure[ConnectionIO]
+    } yield consumed == 1).transact(xa)
 
   def authenticatedBySession(tokenHash: String, now: OffsetDateTime): F[Option[AuthContext]] =
     sql"""
