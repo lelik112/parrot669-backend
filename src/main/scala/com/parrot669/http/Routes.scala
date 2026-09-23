@@ -14,9 +14,6 @@ import org.typelevel.ci.CIStringSyntax
 import java.util.UUID
 import scala.util.Try
 
-final case class LocationCountry(code: String, name: String)
-final case class LocationCity(id: String, countryCode: String, name: String)
-
 final class Routes[F[_]: Async](
     service: ParrotService[F],
     authService: AuthService[F],
@@ -25,18 +22,6 @@ final class Routes[F[_]: Async](
 ) extends Http4sDsl[F] {
 
   private val sessionCookieName = "parrot_session"
-
-  // TODO: Replace this bootstrap data with countries/cities derived from
-  // searchable properties in PostgreSQL.
-  private val locationCountries = List(
-    LocationCountry(code = "ES", name = "Spain")
-  )
-
-  private val locationCitiesByCountry = Map(
-    "ES" -> List(
-      LocationCity(id = "barcelona", countryCode = "ES", name = "Barcelona")
-    )
-  )
   private val sessionMaxAgeSeconds = 30L * 24L * 60L * 60L
 
   private def header(request: Request[F], name: String): String =
@@ -247,15 +232,12 @@ final class Routes[F[_]: Async](
       }
 
     case GET -> Root / "api" / "locations" / "countries" =>
-      Ok(locationCountries)
+      service.locationCountries.flatMap(Ok(_))
 
     case request @ GET -> Root / "api" / "locations" / "cities" =>
-      request.uri.query.params.get("country").map(_.trim.toUpperCase) match {
-        case None | Some("") =>
-          BadRequest(ErrorResponse("country is required"))
-        case Some(countryCode) =>
-          Ok(locationCitiesByCountry.getOrElse(countryCode, Nil))
-      }
+      service
+        .locationCities(request.uri.query.params.getOrElse("country", ""))
+        .flatMap(result => respond(result))
 
     case request @ GET -> Root / "api" / "search" =>
       val params = request.uri.query.params

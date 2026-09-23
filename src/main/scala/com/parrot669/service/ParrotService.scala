@@ -205,6 +205,18 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
 
   def health: F[Boolean] = repo.health
 
+  def locationCountries: F[List[LocationCountry]] =
+    repo.locationCountries
+
+  def locationCities(countryCodeRaw: String): F[Either[ServiceError, List[LocationCity]]] = {
+    val countryCode = normalized(countryCodeRaw).toUpperCase
+
+    if (!countryCode.matches("[A-Z]{2}"))
+      fail[List[LocationCity]](Invalid("country must be a two-letter ISO code"))
+    else
+      repo.locationCities(countryCode).map(_.asRight[ServiceError])
+  }
+
   def createProperty(
       profileId: UUID,
       currentProfileId: UUID,
