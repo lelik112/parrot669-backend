@@ -3,7 +3,7 @@ package com.parrot669.http
 import cats.effect.Async
 import cats.syntax.all._
 import com.parrot669.domain._
-import com.parrot669.service.{AuthService, ParrotService, ServiceError}
+import com.parrot669.service.{AuthService, GeocodingService, ParrotService, ServiceError}
 import io.circe.Encoder
 import io.circe.generic.auto._
 import org.http4s._
@@ -17,6 +17,7 @@ import scala.util.Try
 final class Routes[F[_]: Async](
     service: ParrotService[F],
     authService: AuthService[F],
+    geocodingService: GeocodingService[F],
     adminToken: String,
     secureCookies: Boolean
 ) extends Http4sDsl[F] {
@@ -270,6 +271,12 @@ final class Routes[F[_]: Async](
           }
         }
       }
+
+    case request @ GET -> Root / "api" / "geocode" / "autocomplete" =>
+      authenticated(request) { _ =>
+        geocodingService.autocomplete(request.uri.query.params.get("q"))
+          .flatMap(result => respond(result))
+      }.map(_.putHeaders(Header.Raw(ci"Cache-Control", "no-store")))
 
     case GET -> Root / "api" / "locations" / "countries" =>
       service.locationCountries.flatMap(Ok(_))

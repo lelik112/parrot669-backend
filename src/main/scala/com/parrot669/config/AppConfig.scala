@@ -16,7 +16,8 @@ final case class AppConfig(
     adminToken: String,
     resendApiKey: Option[String],
     resendFrom: String,
-    publicBaseUrl: String
+    publicBaseUrl: String,
+    geoapifyApiKey: Option[String]
 )
 
 object AppConfig {
@@ -31,56 +32,58 @@ object AppConfig {
     } yield s"jdbc:postgresql://$host:$port/$database"
 
   def load: IO[AppConfig] =
-    IO.fromEither {
-      val env = sys.env
-      val environment = env.getOrElse("APP_ENV", "dev")
+    IO.defer(IO.fromEither(fromEnv(sys.env)))
 
-      val port =
-        nonEmpty(env, "PORT")
-          .orElse(nonEmpty(env, "HTTP_PORT"))
-          .flatMap(_.toIntOption)
-          .getOrElse(8080)
+  def fromEnv(env: Map[String, String]): Either[IllegalArgumentException, AppConfig] = {
+    val environment = env.getOrElse("APP_ENV", "dev")
 
-      val adminToken =
-        nonEmpty(env, "PARROT_ADMIN_TOKEN").orElse {
-          if (environment == "prod") None else Some("dev-admin-token-change-me")
-        }
+    val port =
+      nonEmpty(env, "PORT")
+        .orElse(nonEmpty(env, "HTTP_PORT"))
+        .flatMap(_.toIntOption)
+        .getOrElse(8080)
 
-      val resendApiKey = nonEmpty(env, "RESEND_API_KEY")
-      val resendFrom =
-        nonEmpty(env, "RESEND_FROM").getOrElse("PARROT 669 <hello@parrot669.com>")
-      val publicBaseUrl =
-        nonEmpty(env, "APP_PUBLIC_URL").getOrElse {
-          if (environment == "prod") "https://parrot669.com" else "http://localhost:8787"
-        }
+    val adminToken =
+      nonEmpty(env, "PARROT_ADMIN_TOKEN").orElse {
+        if (environment == "prod") None else Some("dev-admin-token-change-me")
+      }
 
-      for {
-        token <- adminToken.toRight(
-          new IllegalArgumentException("PARROT_ADMIN_TOKEN is required in prod")
-        )
-        _ <- Either.cond(
-          environment != "prod" || resendApiKey.nonEmpty,
-          (),
-          new IllegalArgumentException("RESEND_API_KEY is required in prod")
-        )
-      } yield AppConfig(
-        environment = environment,
-        httpPort = port,
-        db = DbConfig(
-          url = railwayJdbcUrl(env).orElse(nonEmpty(env, "DATABASE_URL")).getOrElse(
-            "jdbc:postgresql://localhost:5432/parrot669"
-          ),
-          user = nonEmpty(env, "PGUSER")
-            .orElse(nonEmpty(env, "DATABASE_USER"))
-            .getOrElse("parrot"),
-          password = nonEmpty(env, "PGPASSWORD")
-            .orElse(nonEmpty(env, "DATABASE_PASSWORD"))
-            .getOrElse("parrot")
-        ),
-        adminToken = token,
-        resendApiKey = resendApiKey,
-        resendFrom = resendFrom,
-        publicBaseUrl = publicBaseUrl
+    val resendApiKey = nonEmpty(env, "RESEND_API_KEY")
+    val resendFrom =
+      nonEmpty(env, "RESEND_FROM").getOrElse("PARROT 669 <hello@parrot669.com>")
+    val publicBaseUrl =
+      nonEmpty(env, "APP_PUBLIC_URL").getOrElse {
+        if (environment == "prod") "https://parrot669.com" else "http://localhost:8787"
+      }
+
+    for {
+      token <- adminToken.toRight(
+        new IllegalArgumentException("PARROT_ADMIN_TOKEN is required in prod")
       )
-    }
+      _ <- Either.cond(
+        environment != "prod" || resendApiKey.nonEmpty,
+        (),
+        new IllegalArgumentException("RESEND_API_KEY is required in prod")
+      )
+    } yield AppConfig(
+      environment = environment,
+      httpPort = port,
+      db = DbConfig(
+        url = railwayJdbcUrl(env).orElse(nonEmpty(env, "DATABASE_URL")).getOrElse(
+          "jdbc:postgresql://localhost:5432/parrot669"
+        ),
+        user = nonEmpty(env, "PGUSER")
+          .orElse(nonEmpty(env, "DATABASE_USER"))
+          .getOrElse("parrot"),
+        password = nonEmpty(env, "PGPASSWORD")
+          .orElse(nonEmpty(env, "DATABASE_PASSWORD"))
+          .getOrElse("parrot")
+      ),
+      adminToken = token,
+      resendApiKey = resendApiKey,
+      resendFrom = resendFrom,
+      publicBaseUrl = publicBaseUrl,
+      geoapifyApiKey = nonEmpty(env, "GEOAPIFY_API_KEY")
+    )
+  }
 }

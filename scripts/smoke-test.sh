@@ -42,7 +42,8 @@ ICS
 python3 -m http.server 18080 --bind 127.0.0.1 --directory "$ICAL_DIR" >/dev/null 2>&1 &
 ICAL_SERVER_PID=$!
 
-sbt -batch run >"$LOG_FILE" 2>&1 &
+# This smoke environment intentionally exercises the optional integration without a key.
+GEOAPIFY_API_KEY= sbt -batch run >"$LOG_FILE" 2>&1 &
 SERVER_PID=$!
 
 cleanup() {
@@ -143,6 +144,34 @@ PY
 unauthenticated_dashboard_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
   "http://localhost:$HTTP_PORT/api/dashboard")
 test "$unauthenticated_dashboard_status" = "401"
+
+python3 - "$HTTP_PORT" "$COOKIE_JAR" <<'PY'
+import http.cookiejar, json, sys, urllib.error, urllib.request
+
+base = "http://localhost:" + sys.argv[1] + "/api/geocode/autocomplete"
+jar = http.cookiejar.MozillaCookieJar(sys.argv[2])
+jar.load(ignore_discard=True, ignore_expires=True)
+# Send the host-only localhost session explicitly, as in test-unavailability.py.
+session = "; ".join(c.name + "=" + c.value for c in jar if c.name == "parrot_session")
+assert session, "missing smoke-test session"
+for suffix, authenticated, expected, message in [
+    ("?q=Barcelona", False, 401, "authentication required"),
+    ("", True, 400, "q is required"),
+    ("?q=%20%20", True, 400, "q is required"),
+    ("?q=ab", True, 400, "q must contain between 3 and 256 characters"),
+    ("?q=Barcelona", True, 503, "Address autocomplete is not configured"),
+]:
+    request = urllib.request.Request(base + suffix, headers={"Cookie": session} if authenticated else {})
+    try:
+        response = urllib.request.urlopen(request, timeout=10)
+    except urllib.error.HTTPError as error:
+        response = error
+    with response:
+        assert response.code == expected, (suffix, response.code)
+        assert response.headers.get("Cache-Control") == "no-store"
+        assert json.load(response)["error"] == message
+print("Geocoding auth, validation and missing-key HTTP checks passed")
+PY
 
 curl --fail --silent -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
   -X POST "http://localhost:$HTTP_PORT/api/auth/logout" --output /dev/null

@@ -6,9 +6,9 @@ import com.comcast.ip4s.{Host, Port}
 import com.parrot669.config.AppConfig
 import com.parrot669.db.Database
 import com.parrot669.http.Routes
-import com.parrot669.integration.HttpIcalFetcher
+import com.parrot669.integration.{GeoapifyClient, HttpIcalFetcher}
 import com.parrot669.repo.{AuthRepository, ParrotRepository}
-import com.parrot669.service.{AuthService, EmailSender, EmailVerificationService, ParrotService, ResendEmailSender}
+import com.parrot669.service.{AuthService, EmailSender, EmailVerificationService, GeocodingService, ParrotService, ResendEmailSender}
 import org.http4s.ember.server.EmberServerBuilder
 import org.slf4j.LoggerFactory
 
@@ -45,9 +45,11 @@ object Main extends IOApp.Simple {
               .getOrElse(EmailSender.unconfigured[IO])
         emailVerificationService = new EmailVerificationService[IO](authRepo, emailSender)
         authService = new AuthService[IO](authRepo, emailVerificationService)
+        geocodingService = new GeocodingService[IO](config.geoapifyApiKey, GeoapifyClient.live[IO])
         routes = new Routes[IO](
           service,
           authService,
+          geocodingService,
           config.adminToken,
           secureCookies = config.environment == "prod"
         ).routes

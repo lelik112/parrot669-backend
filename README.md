@@ -1,5 +1,39 @@
 # PARROT 669 backend
 
+## Owner address autocomplete
+
+`GET /api/geocode/autocomplete?q=Barcelona` requires the existing owner session cookie.
+The query is trimmed and must contain 3–256 characters. The backend calls Geoapify
+with at most five results and returns only:
+
+```json
+[{"address":"Carrer de Mallorca 401, Barcelona, Spain","countryCode":"ES","country":"Spain","city":"Barcelona","latitude":41.4036,"longitude":2.1744,"placeId":"..."}]
+```
+
+`countryCode`, `country` and `city` can be null for broad suggestions; components are
+never guessed. Country codes are uppercase; provider names use English consistently.
+No matches returns `200 []`. Responses include `Cache-Control: no-store`.
+
+Set optional Railway variable `GEOAPIFY_API_KEY` on the backend service. It stays on
+the server and is never included in responses. An absent/blank key does not prevent
+startup: the endpoint returns `503 {"error":"Address autocomplete is not configured"}`.
+Missing/invalid `q` returns 400, a missing/expired session returns 401, and provider
+failures/timeouts return a sanitized 503. Requests have a 3-second connection timeout
+and an 8-second HTTP timeout; provider redirects are not followed.
+
+This endpoint does not save addresses or change Property, migrations, guest location
+lists or guest search. See [the host UI plan](docs/host-address-ui-plan.md) for the next
+phase, including the separate property persistence work.
+
+### Geoapify changelog — 2026-09-23
+
+- Added `NormalizedAddress`, a small Geoapify client and authenticated autocomplete
+  route so owners can get normalized suggestions without exposing the provider key.
+- Added optional environment configuration and sanitized errors so provider setup or
+  outages do not break startup or appear as unexplained 500s.
+- Added mock-provider tests for mapping, missing key, validation, URL encoding and
+  failures, plus HTTP smoke checks for auth/400/503 and no-store responses.
+
 ## Manual unavailable periods
 
 Owners can create/list `GET|POST /api/properties/:id/unavailability` and edit/delete
