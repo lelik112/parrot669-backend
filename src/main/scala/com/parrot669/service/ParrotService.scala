@@ -446,6 +446,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
     }
 
   def search(
+      countryCodeRaw: String,
       city: String,
       fromRaw: String,
       toRaw: String,
@@ -456,9 +457,13 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
       minPriceCents: Option[Long],
       maxPriceCents: Option[Long]
   ): F[Either[ServiceError, List[SearchResult]]] = {
+    val countryCode = normalized(countryCodeRaw).toUpperCase
+    val normalizedCity = normalized(city)
+
     val validated =
       for {
-        _ <- Either.cond(normalized(city).equalsIgnoreCase("Barcelona"), (), Invalid("only Barcelona is supported right now"))
+        _ <- Either.cond(countryCode.matches("[A-Z]{2}"), (), Invalid("country is required and must be a two-letter ISO code"))
+        _ <- Either.cond(normalizedCity.nonEmpty, (), Invalid("city is required"))
         from <- parseDate(fromRaw, "from")
         to <- parseDate(toRaw, "to")
         _ <- Either.cond(to.isAfter(from), (), Invalid("to must be after from; checkout date is exclusive"))
@@ -482,7 +487,7 @@ final class ParrotService[F[_]: Async](repo: ParrotRepository[F], icalFetcher: I
       case Left(error) => fail[List[SearchResult]](error)
       case Right((from, to, stayDays, accommodationType)) =>
         val requirePrice = pricedOnly || minPriceCents.isDefined || maxPriceCents.isDefined
-        repo.searchAvailable(from, to, bedrooms, sleeps, stayDays, accommodationType, requirePrice).flatMap { matches =>
+        repo.searchAvailable(countryCode, normalizedCity, from, to, bedrooms, sleeps, stayDays, accommodationType, requirePrice).flatMap { matches =>
           matches.traverse { item =>
             (repo.listingsForProperty(item.propertyId), repo.propertyCleaningFee(item.propertyId)).mapN { (listings, cleaningFee) =>
               val price = item.nightlyTotalCents.map { nightlySubtotal =>
