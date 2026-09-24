@@ -6,7 +6,7 @@ import com.comcast.ip4s.{Host, Port}
 import com.parrot669.config.AppConfig
 import com.parrot669.db.Database
 import com.parrot669.calendarverification.{CalendarVerificationRepository, CalendarVerificationRoutes, CalendarVerificationService}
-import com.parrot669.http.Routes
+import com.parrot669.http.{AuthRoutes, Routes}
 import com.parrot669.housing.{AvailabilityRoutes, AvailabilityService, DoobieAvailabilityRepository}
 import com.parrot669.http.PasswordResetRoutes
 import com.parrot669.housing.{PropertyRepository, PropertyRoutes, PropertyService}
@@ -70,9 +70,9 @@ object Main extends IOApp.Simple {
           service,
           authService,
           geocodingService,
-          config.adminToken,
-          secureCookies = config.environment == "prod"
-        ).routes <+> new ProfileRoutes[IO](profiles, authService.authenticate).routes <+>
+          config.adminToken
+        ).routes <+> new AuthRoutes[IO](authService, secureCookies = config.environment == "prod").routes <+>
+          new ProfileRoutes[IO](profiles, authService.authenticate).routes <+>
           new SearchRoutes[IO](search).routes <+>
           new AvailabilityRoutes[IO](availability, authService.authenticate).routes <+>
           new PropertyRoutes[IO](properties, authService.authenticate).routes <+>
