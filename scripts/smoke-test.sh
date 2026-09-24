@@ -677,6 +677,19 @@ assert data == [], data
 print("Last good reservation snapshot still blocks search")
 PY
 
+curl --fail --silent -X DELETE "http://localhost:$HTTP_PORT/api/calendars/$calendar_id" -b "$COOKIE_JAR" --output /dev/null
+
+after_calendar_delete_dashboard_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/dashboard" -b "$COOKIE_JAR")
+after_calendar_delete_search_json=$(curl --fail --silent "http://localhost:$HTTP_PORT/api/search?country=ES&city=Barcelona&from=2027-01-10&to=2027-01-20&bedrooms=2&sleeps=4")
+AFTER_CALENDAR_DELETE_DASHBOARD_JSON="$after_calendar_delete_dashboard_json" AFTER_CALENDAR_DELETE_SEARCH_JSON="$after_calendar_delete_search_json" python3 - <<'PY'
+import json, os
+dashboard = json.loads(os.environ["AFTER_CALENDAR_DELETE_DASHBOARD_JSON"])
+search = json.loads(os.environ["AFTER_CALENDAR_DELETE_SEARCH_JSON"])
+assert dashboard["properties"][0]["calendars"] == [], dashboard
+assert len(search) == 1, search
+print("External calendar deletion removes the snapshot and restores search")
+PY
+
 wrong_delete_status=$(curl --silent --output /dev/null --write-out '%{http_code}'   -X DELETE "http://localhost:$HTTP_PORT/api/availability/$availability_id"   -H 'X-Parrot-Token: definitely-wrong-token')
 
 test "$wrong_delete_status" = "401"
