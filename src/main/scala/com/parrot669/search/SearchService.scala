@@ -1,11 +1,11 @@
 package com.parrot669.search
 
-import cats.effect.Async
+import cats.effect.{Async, Clock}
 import cats.syntax.all._
-import com.parrot669.domain.{ListingRecord, LocationCountry, PublicListing}
+import com.parrot669.domain.{LocationCountry, PublicLinks}
 import com.parrot669.service.ServiceError
 
-import java.time.LocalDate
+import java.time.{LocalDate, ZoneOffset}
 import java.time.temporal.ChronoUnit
 import scala.util.Try
 
@@ -29,17 +29,6 @@ final class SearchService[F[_]: Async](repo: SearchRepository[F]) {
       case Some(value) if accommodationTypes.contains(value) => Right(Some(value))
       case Some(_) => Left(Invalid("accommodationType must be entire_place or private_room"))
     }
-
-  private def toPublicListing(listing: ListingRecord): PublicListing =
-    PublicListing(
-      id = listing.id.toString,
-      platform = listing.platform,
-      externalId = listing.externalId,
-      url = listing.url,
-      cleaningFeeCents = listing.cleaningFeeCents,
-      showInSearch = listing.showInSearch,
-      createdAt = listing.createdAt.toString
-    )
 
   def locationCountries: F[List[LocationCountry]] =
     repo.locationCountries
@@ -97,7 +86,9 @@ final class SearchService[F[_]: Async](repo: SearchRepository[F]) {
         val requirePrice = pricedOnly || minPriceCents.isDefined || maxPriceCents.isDefined
         repo.searchAvailable(countryCode, normalizedCity, from, to, bedrooms, sleeps, stayDays, accommodationType, requirePrice).flatMap { matches =>
           matches.traverse { item =>
-            (repo.listingsForProperty(item.propertyId), repo.propertyCleaningFee(item.propertyId)).mapN { (listings, cleaningFee) =>
+            (repo.listingsForProperty(item.propertyId), repo.propertyCleaningFee(item.propertyId),
+              repo.linkSource(item.propertyId), Clock[F].realTimeInstant.map(_.atOffset(ZoneOffset.UTC)))
+              .mapN { (listings, cleaningFee, source, now) =>
               val price = item.nightlyTotalCents.map { nightlySubtotal =>
                 PriceEstimate(
                   currency = "EUR",
@@ -120,7 +111,7 @@ final class SearchService[F[_]: Async](repo: SearchRepository[F]) {
                 availableFrom = item.dateFrom.toString,
                 availableTo = item.dateTo.toString,
                 price = price,
-                links = listings.filter(_.showInSearch).map(toPublicListing)
+                links = listings.flatMap(PublicLinks.published(_, source, now))
               )
             }
           }.map { results =>

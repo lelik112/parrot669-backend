@@ -12,6 +12,7 @@ trait ProfileRepository[F[_]] {
   def findProfileByParrotId(parrotId: String): F[Option[ProfileRecord]]
   def propertiesForProfile(profileId: UUID): F[List[PropertyRecord]]
   def listingsForProfile(profileId: UUID): F[List[ListingRecord]]
+  def linkSource(propertyId: UUID): F[Option[PublicLinkSource]]
   def verificationsForProfile(profileId: UUID): F[List[VerificationRecord]]
   def availabilityForProperty(propertyId: UUID): F[List[AvailabilityRecord]]
   def unavailabilityForProperty(propertyId: UUID): F[List[UnavailabilityRecord]]
@@ -20,6 +21,9 @@ trait ProfileRepository[F[_]] {
 }
 
 final class DoobieProfileRepository[F[_]: Async](xa: Transactor[F]) extends ProfileRepository[F] {
+
+  def linkSource(propertyId: UUID): F[Option[PublicLinkSource]] =
+    PublicLinks.source(propertyId).transact(xa)
 
   def findProfile(profileId: UUID): F[Option[ProfileRecord]] =
     sql"""

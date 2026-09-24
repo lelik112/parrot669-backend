@@ -54,6 +54,9 @@ class SearchSuite extends munit.FunSuite {
     def listingsForProperty(propertyId: UUID): IO[List[ListingRecord]] =
       record(s"listings:$propertyId", listings.getOrElse(propertyId, Nil))
 
+    def linkSource(propertyId: UUID): IO[Option[com.parrot669.domain.PublicLinkSource]] =
+      IO.pure(None)
+
     def searchAvailable(
         countryCode: String,
         city: String,
@@ -191,7 +194,8 @@ class SearchSuite extends munit.FunSuite {
       "id" -> Json.fromString(visible.id.toString), "platform" -> Json.fromString("airbnb"),
       "externalId" -> Json.fromString("10"), "url" -> Json.fromString(visible.url),
       "cleaningFeeCents" -> Json.Null, "showInSearch" -> Json.True,
-      "createdAt" -> Json.fromString(createdAt.toString)))
+      "createdAt" -> Json.fromString(createdAt.toString),
+      "calendarControlStatus" -> Json.fromString("unverified")))
     results.tail.foreach { result =>
       assertEquals(result.hcursor.downField("links").focus, Some(Json.arr()))
       assertEquals(result.hcursor.downField("price").focus, Some(Json.Null))
