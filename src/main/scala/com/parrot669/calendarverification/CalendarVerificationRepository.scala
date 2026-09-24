@@ -6,14 +6,15 @@ import com.parrot669.service.ServiceError
 import doobie._
 import doobie.implicits._
 import doobie.postgres.implicits._
-import java.time.OffsetDateTime
+import java.time.{LocalDate,OffsetDateTime}
 import java.util.UUID
 
 final class CalendarVerificationRepository[F[_]: Async](xa: Transactor[F]) {
   import ServiceError._
   private val columns = fr"""id, calendar_id, property_id, source_hash, status, attempts_count,
     started_at, expires_at, baseline_snapshot, check_requested_at, checks_count, next_check_at,
-    verified_at, blocked_until, last_error, lease_token, lease_until"""
+    verified_at, blocked_until, last_error, lease_token, lease_until,
+    selected_from, selected_to, expected_action"""
 
   // Serialize decisions on the existing calendar row. Network requests run after
   // commit; expiring leases + tokens fence concurrent clicks/workers/restarts.
@@ -31,7 +32,8 @@ final class CalendarVerificationRepository[F[_]: Async](xa: Transactor[F]) {
     sql"""UPDATE calendar_verification_attempts SET status=${a.status}, expires_at=${a.expiresAt},
       baseline_snapshot=${a.baselineSnapshot}, check_requested_at=${a.checkRequestedAt}, checks_count=${a.checksCount},
       next_check_at=${a.nextCheckAt}, verified_at=${a.verifiedAt}, blocked_until=${a.blockedUntil},
-      last_error=${a.lastError}, lease_token=${a.leaseToken}, lease_until=${a.leaseUntil} WHERE id=${a.id}"""
+      last_error=${a.lastError}, lease_token=${a.leaseToken}, lease_until=${a.leaseUntil},
+      expected_action=${a.expectedAction} WHERE id=${a.id}"""
       .update.run.as(a)
 
   private def fail(a: VerificationAttempt, now: OffsetDateTime, reason: String): ConnectionIO[VerificationAttempt] =
@@ -47,14 +49,18 @@ final class CalendarVerificationRepository[F[_]: Async](xa: Transactor[F]) {
     else a.pure[ConnectionIO]
 
   private def view(c: VerificationCalendar, value: Option[VerificationAttempt], now: OffsetDateTime): CalendarVerificationView = {
-    val current = value.filterNot(a => (a.status=="verified" && !a.sourceMatches(c)) || (a.status=="blocked" && !a.blocked(now)))
+    val current = value.filterNot(a => (a.status=="verified" && (a.expectedAction.isEmpty || !a.sourceMatches(c))) ||
+      (a.status=="blocked" && !a.blocked(now)))
     current match {
-      case None => CalendarVerificationView("required",None,0,3,false,0,None,None,None,None,None,None,c.enabled,false)
-      case Some(a) => CalendarVerificationView(a.status,Some(a.id.toString),a.attemptsCount,3,a.baselineSnapshot.nonEmpty,a.checksCount,
+      case None => CalendarVerificationView("required",None,0,3,false,0,None,None,None,None,None,None,c.enabled,false,None,None,None)
+      case Some(a) => CalendarVerificationView(a.status,Some(a.id.toString),a.attemptsCount,3,a.expectedAction.nonEmpty,a.checksCount,
         Some(a.startedAt.toString),Some(a.expiresAt.toString),a.nextCheckAt.map(_.toString),a.verifiedAt.map(_.toString),
         a.blockedUntil.map(_.toString),a.lastError,
-        canStart=c.enabled && (a.status=="failed" || (a.status=="pending" && a.baselineSnapshot.isEmpty && !a.leased(now) && a.nextCheckAt.forall(!_.isAfter(now)))),
-        canCheck=c.enabled && a.status=="pending" && a.baselineSnapshot.nonEmpty && a.checkRequestedAt.isEmpty && !a.leased(now))
+        canStart=c.enabled && (a.status=="failed" || a.status=="rejected" ||
+          (a.status=="verified" && a.expectedAction.isEmpty) ||
+          (a.status=="pending" && a.baselineSnapshot.isEmpty && !a.leased(now) && a.nextCheckAt.forall(!_.isAfter(now)))),
+        canCheck=c.enabled && a.status=="pending" && a.expectedAction.nonEmpty && a.checkRequestedAt.isEmpty && !a.leased(now),
+        a.selectedFrom.map(_.toString),a.selectedTo.map(_.toString),a.expectedAction)
     }
   }
 
@@ -81,7 +87,7 @@ final class CalendarVerificationRepository[F[_]: Async](xa: Transactor[F]) {
     else if(!c.enabled) Some(Conflict("enable the calendar before verification"))
     else None
 
-  def start(id: UUID, owner: UUID, now: OffsetDateTime): F[Either[ServiceError, VerificationDecision]] =
+  def start(id: UUID, owner: UUID, from: LocalDate, to: LocalDate, now: OffsetDateTime): F[Either[ServiceError, VerificationDecision]] =
     decision(id,owner,now) { (c,previous) =>
       refused(c,previous,now) match {
         case Some(error) => (Left(error): Either[ServiceError,VerificationDecision]).pure[ConnectionIO]
@@ -89,15 +95,15 @@ final class CalendarVerificationRepository[F[_]: Async](xa: Transactor[F]) {
           case Some(a) if a.status=="pending" =>
             if(a.baselineSnapshot.isEmpty && !a.leased(now) && a.nextCheckAt.forall(!_.isAfter(now))) claim(c,a,now).map(Right(_))
             else VerificationDecision(view(c,previous,now),None).asRight[ServiceError].pure[ConnectionIO]
-          case Some(a) if a.status=="verified" && a.sourceMatches(c) =>
+          case Some(a) if a.status=="verified" && a.sourceMatches(c) && a.expectedAction.nonEmpty =>
             VerificationDecision(view(c,previous,now),None).asRight[ServiceError].pure[ConnectionIO]
           case _ =>
-            val count=previous.filter(_.status=="failed").fold(1)(_.attemptsCount+1)
+            val count=previous.filter(a => a.status=="failed" && a.lastError!=Some("challenge_required")).fold(1)(_.attemptsCount+1)
             val a=VerificationAttempt(UUID.randomUUID(),Some(c.id),c.propertyId,c.sourceHash,"pending",count,
-              now,now.plusMinutes(30),None,None,0,None,None,None,None,None,None)
+              now,now.plusMinutes(30),None,None,0,None,None,None,None,None,None,Some(from),Some(to),None)
             (sql"""INSERT INTO calendar_verification_attempts
-              (id,calendar_id,property_id,source_hash,status,attempts_count,started_at,expires_at)
-              VALUES (${a.id},${c.id},${c.propertyId},${a.sourceHash},'pending',$count,$now,${a.expiresAt})"""
+              (id,calendar_id,property_id,source_hash,status,attempts_count,started_at,expires_at,selected_from,selected_to)
+              VALUES (${a.id},${c.id},${c.propertyId},${a.sourceHash},'pending',$count,$now,${a.expiresAt},$from,$to)"""
               .update.run *> claim(c,a,now)).map(Right(_))
         }
       }
@@ -108,9 +114,9 @@ final class CalendarVerificationRepository[F[_]: Async](xa: Transactor[F]) {
       refused(c,current,now) match {
         case Some(error) => (Left(error): Either[ServiceError,VerificationDecision]).pure[ConnectionIO]
         case None => current match {
-          case Some(a) if a.status=="verified" && a.sourceMatches(c) =>
+          case Some(a) if a.status=="verified" && a.sourceMatches(c) && a.expectedAction.nonEmpty =>
             VerificationDecision(view(c,current,now),None).asRight[ServiceError].pure[ConnectionIO]
-          case Some(a) if a.status=="pending" && a.baselineSnapshot.nonEmpty =>
+          case Some(a) if a.status=="pending" && a.expectedAction.nonEmpty =>
             if(a.checkRequestedAt.nonEmpty) VerificationDecision(view(c,current,now),None).asRight[ServiceError].pure[ConnectionIO]
             else claim(c,a.copy(checkRequestedAt=Some(now),expiresAt=now.plusMinutes(20),nextCheckAt=Some(now)),now).map(Right(_))
           case _ => (Left(Conflict("start calendar verification and wait for its initial snapshot")): Either[ServiceError,VerificationDecision]).pure[ConnectionIO]
@@ -135,20 +141,23 @@ final class CalendarVerificationRepository[F[_]: Async](xa: Transactor[F]) {
     }}
   } yield job.flatten).transact(xa)
 
-  private[calendarverification] def complete(job: VerificationJob, snapshot: Either[String,String], now: OffsetDateTime): F[Unit] = (for {
+  private[calendarverification] def complete(job: VerificationJob, snapshot: Either[String,ChallengeSnapshot], now: OffsetDateTime): F[Unit] = (for {
     c <- calendar(job.calendar.id,None)
     _ <- c.traverse_ { c => latest(c.propertyId).flatMap(_.traverse(normalize(c,_,now))).flatMap {
       case Some(a) if a.id==job.attempt.id && a.status=="pending" && a.leaseToken==job.attempt.leaseToken && a.sourceMatches(c) =>
         val released=a.copy(leaseToken=None,leaseUntil=None)
         if(!c.enabled) save(released.copy(lastError=Some("calendar_disabled"),nextCheckAt=Some(now.plusMinutes(1)))).void
         else if(a.baselineSnapshot.isEmpty) snapshot match {
-          case Right(value) => save(released.copy(baselineSnapshot=Some(value),nextCheckAt=None,lastError=None)).void
+          case Right(value) => save(released.copy(baselineSnapshot=Some(value.canonical),expectedAction=value.action,
+            nextCheckAt=None,lastError=None)).void
+          case Left(error) if error=="choose_unreserved_dates" || error=="choose_uniform_dates" =>
+            save(released.copy(status="rejected",nextCheckAt=None,lastError=Some(error))).void
           case Left(error) => save(released.copy(nextCheckAt=Some(now.plusMinutes(1)),lastError=Some(error))).void
         }
         else {
           val checked=released.copy(checksCount=a.checksCount+1)
           snapshot match {
-            case Right(value) if !a.baselineSnapshot.contains(value) =>
+            case Right(value) if value.changed && !a.baselineSnapshot.contains(value.canonical) =>
               save(checked.copy(status="verified",verifiedAt=Some(now),nextCheckAt=None,lastError=None)).void
             case _ =>
               val next=a.checkRequestedAt.flatMap(start => List(5L,10L,20L).map(start.plusMinutes).find(_.isAfter(now)))

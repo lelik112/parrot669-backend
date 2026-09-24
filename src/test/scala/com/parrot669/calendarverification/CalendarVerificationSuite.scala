@@ -16,7 +16,7 @@ import org.http4s.circe.CirceEntityCodec._
 import org.typelevel.ci.CIStringSyntax
 import java.nio.charset.StandardCharsets.UTF_8
 import java.security.MessageDigest
-import java.time.{OffsetDateTime,ZoneOffset}
+import java.time.{LocalDate,OffsetDateTime,ZoneOffset}
 import java.util.UUID
 
 class CalendarVerificationSuite extends munit.FunSuite {
@@ -24,13 +24,14 @@ class CalendarVerificationSuite extends munit.FunSuite {
   private val sourceUrl="https://www.airbnb.com/calendar/ical/123456789.ics?s=private-test-token"
   private val snapshotA="BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:a\nDTSTART:20301015\nDTEND:20301020\nSUMMARY:Reserved\nEND:VEVENT\nEND:VCALENDAR"
   private val snapshotB=snapshotA.replace("END:VCALENDAR","BEGIN:VEVENT\nUID:b\nDTSTART:20301101\nDTEND:20301103\nSUMMARY:Airbnb (Not available)\nEND:VEVENT\nEND:VCALENDAR")
+  private val dates=StartVerificationRequest("2030-11-01","2030-11-02")
 
   private case class VerificationFixture(xa: Transactor[IO],repo: CalendarVerificationRepository[IO],service: CalendarVerificationService[IO],
       fetcher: IcalFetcher[IO],clock: Ref[IO,OffsetDateTime],body: Ref[IO,IO[String]],calls: Ref[IO,Int],
       app: HttpApp[IO],owner: UUID,stranger: UUID,property: UUID,calendar: UUID,token: String) {
     def advance(minutes: Long): IO[Unit]=clock.update(_.plusMinutes(minutes))
     def status: IO[CalendarVerificationView]=service.status(calendar,owner).map(_.toOption.get)
-    def start: IO[CalendarVerificationView]=service.start(calendar,owner).map(_.toOption.get)
+    def start: IO[CalendarVerificationView]=service.start(calendar,owner,dates).map(_.toOption.get)
     def check: IO[CalendarVerificationView]=service.check(calendar,owner).map(_.toOption.get)
     def newService=new CalendarVerificationService[IO](new CalendarVerificationRepository[IO](xa),fetcher,clock.get)
     def failAttempt: IO[CalendarVerificationView]=start *> check *> List(5L,5L,10L).traverse_(n=>advance(n) *> newService.runOnce) *> status
@@ -38,7 +39,8 @@ class CalendarVerificationSuite extends munit.FunSuite {
     def enabled(value: Boolean): IO[Unit]=sql"UPDATE external_calendars SET enabled=$value WHERE id=$calendar".update.run.transact(xa).void
     def request(method: Method,path: String,authenticated: Boolean=true): IO[Response[IO]]={
       val request=Request[IO](method,Uri.unsafeFromString(s"/api/calendars/$calendar/verification$path"))
-      app(if(authenticated)request.putHeaders(Header.Raw(ci"Cookie",s"parrot_session=$token"))else request)
+      val withBody=if(path=="/start")request.withEntity(dates)else request
+      app(if(authenticated)withBody.putHeaders(Header.Raw(ci"Cookie",s"parrot_session=$token"))else withBody)
     }
   }
 
@@ -50,7 +52,8 @@ class CalendarVerificationSuite extends munit.FunSuite {
     val schema="calendar_verification_test_"+UUID.randomUUID().toString.replace("-","")
     val admin=Transactor.fromDriverManager[IO]("org.postgresql.Driver",url,user,password,None)
     val xa=Transactor.fromDriverManager[IO]("org.postgresql.Driver",url+(if(url.contains("?"))"&"else"?")+"currentSchema="+schema,user,password,None)
-    val migration=List("V7__external_calendars.sql","V24__calendar_ownership_verification.sql").map { name=>
+    val migration=List("V7__external_calendars.sql","V24__calendar_ownership_verification.sql",
+      "V25__calendar_verification_challenge.sql").map { name=>
       val source=scala.io.Source.fromInputStream(getClass.getResourceAsStream("/db/migration/"+name))
       try source.mkString finally source.close()
     }.mkString("\n")
@@ -109,6 +112,52 @@ class CalendarVerificationSuite extends munit.FunSuite {
     _=assertEquals(events,0L)
   }yield()}}
 
+  test("changes elsewhere and a partial change of selected nights never verify") { withDb { f=>for {
+    started<-f.start
+    _=assertEquals(started.selectedFrom,Some(dates.from))
+    _=assertEquals(started.expectedAction,Some("close"))
+    outside=snapshotA.replace("END:VCALENDAR","BEGIN:VEVENT\nDTSTART:20301025\nDTEND:20301027\nSUMMARY:Airbnb (Not available)\nEND:VEVENT\nEND:VCALENDAR")
+    _<-f.body.set(IO.pure(outside))
+    elsewhere<-f.check
+    _=assertEquals(elsewhere.status,"pending")
+    partial=snapshotA.replace("END:VCALENDAR","BEGIN:VEVENT\nDTSTART:20301101\nDTEND:20301102\nSUMMARY:Airbnb (Not available)\nEND:VEVENT\nEND:VCALENDAR")
+    _<-f.body.set(IO.pure(partial)) *> f.advance(5) *> f.newService.runOnce
+    stillPending<-f.status
+    _=assertEquals(stillPending.status,"pending")
+    _<-f.body.set(IO.pure(snapshotB)) *> f.advance(5) *> f.newService.runOnce
+    verified<-f.status
+    _=assertEquals(verified.status,"verified")
+  }yield()}}
+
+  test("opening a fully owner-blocked selected range verifies after it is free") { withDb { f=>for {
+    _<-f.body.set(IO.pure(snapshotB))
+    started<-f.start
+    _=assertEquals(started.expectedAction,Some("open"))
+    unchanged<-f.check
+    _=assertEquals(unchanged.status,"pending")
+    _<-f.body.set(IO.pure(snapshotA)) *> f.advance(5) *> f.newService.runOnce
+    verified<-f.status
+    _=assertEquals(verified.status,"verified")
+  }yield()}}
+
+  test("reserved or mixed initial dates are rejected without consuming an attempt") { withDb { f=>for {
+    reserved<-f.service.start(f.calendar,f.owner,StartVerificationRequest("2030-10-15","2030-10-16")).map(_.toOption.get)
+    _=assertEquals(reserved.status,"rejected")
+    _=assertEquals(reserved.lastError,Some("choose_unreserved_dates"))
+    mixed=snapshotA.replace("END:VCALENDAR","BEGIN:VEVENT\nDTSTART:20301101\nDTEND:20301102\nSUMMARY:Airbnb (Not available)\nEND:VEVENT\nEND:VCALENDAR")
+    _<-f.body.set(IO.pure(mixed))
+    rejected<-f.start
+    _=assertEquals(rejected.status,"rejected")
+    _=assertEquals(rejected.lastError,Some("choose_uniform_dates"))
+    _<-f.body.set(IO.pure(snapshotA))
+    accepted<-f.start
+    _=assertEquals(accepted.attemptsCount,1)
+    _=assertEquals(accepted.selectedTo,Some(dates.to))
+    unchanged<-f.service.start(f.calendar,f.owner,StartVerificationRequest("2030-11-04","2030-11-05")).map(_.toOption.get)
+    _=assertEquals(unchanged.attemptId,accepted.attemptId)
+    _=assertEquals(unchanged.selectedFrom,Some(dates.from))
+  }yield()}}
+
   test("unchanged snapshot remains pending; duplicate clicks and process restarts preserve 5/10/20-minute retries") { withDb { f=>for {
     started<-f.start
     checked<-f.check
@@ -146,20 +195,20 @@ class CalendarVerificationSuite extends munit.FunSuite {
     denied<-f.service.check(f.calendar,f.owner)
     _=assert(denied.left.toOption.exists(_.isInstanceOf[ServiceError.RateLimited]))
     _<-f.changeUrl
-    deniedStart<-f.service.start(f.calendar,f.owner)
+    deniedStart<-f.service.start(f.calendar,f.owner,dates)
     _=assert(deniedStart.isLeft)
     _<-sql"DELETE FROM external_calendars WHERE id=${f.calendar}".update.run.transact(f.xa)
     replacement=UUID.randomUUID()
     now<-f.clock.get
     _<-sql"""INSERT INTO external_calendars(id,property_id,provider,ical_url,status,created_at,updated_at)
       VALUES ($replacement,${f.property},'airbnb',$sourceUrl,'connected',$now,$now)""".update.run.transact(f.xa)
-    reconnected<-f.service.start(replacement,f.owner)
+    reconnected<-f.service.start(replacement,f.owner,dates)
     _=assert(reconnected.isLeft)
     _<-f.advance(24*60-1)
-    tooEarly<-f.service.start(replacement,f.owner)
+    tooEarly<-f.service.start(replacement,f.owner,dates)
     _=assert(tooEarly.isLeft)
     _<-f.advance(1)
-    restarted<-f.service.start(replacement,f.owner).map(_.toOption.get)
+    restarted<-f.service.start(replacement,f.owner,dates).map(_.toOption.get)
     _=assertEquals(restarted.attemptsCount,1)
     _<-f.body.set(IO.pure(snapshotB))
     verified<-f.service.check(replacement,f.owner).map(_.toOption.get)
@@ -223,13 +272,13 @@ class CalendarVerificationSuite extends munit.FunSuite {
 
   test("abandoned start expires; a crashed lease is reclaimed without accepting the old worker's result") { withDb { f=>for {
     now<-f.clock.get
-    decision<-f.repo.start(f.calendar,f.owner,now).map(_.toOption.get)
+    decision<-f.repo.start(f.calendar,f.owner,LocalDate.parse(dates.from),LocalDate.parse(dates.to),now).map(_.toOption.get)
     old=decision.job.get
     _<-f.advance(2) *> f.newService.runOnce
     ready<-f.status
     _=assert(ready.baselineReady)
     later<-f.clock.get
-    _<-f.repo.complete(old,Right("malicious-stale-snapshot"),later)
+    _<-f.repo.complete(old,Right(ChallengeSnapshot("malicious-stale-snapshot",Some("close"),true)),later)
     _<-f.check
     unchanged<-f.status
     _=assertEquals(unchanged.status,"pending")
@@ -246,7 +295,7 @@ class CalendarVerificationSuite extends munit.FunSuite {
     _<-List((Method.GET,""),(Method.POST,"/start"),(Method.POST,"/check")).traverse_ {case (method,path)=>
       f.request(method,path,authenticated=false).map(r=>assertEquals(r.status,Status.Unauthorized))
     }
-    wrong<-f.service.start(f.calendar,f.stranger)
+    wrong<-f.service.start(f.calendar,f.stranger,dates)
     _=assert(wrong.left.toOption.exists(_.isInstanceOf[ServiceError.NotFound]))
     noStart<-f.request(Method.POST,"/check")
     _=assertEquals(noStart.status,Status.Conflict)
