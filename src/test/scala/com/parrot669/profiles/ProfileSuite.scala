@@ -39,6 +39,7 @@ class ProfileSuite extends munit.FunSuite {
     def findProfileByParrotId(parrotId: String): IO[Option[ProfileRecord]] = read(s"public:$parrotId", profile)
     def propertiesForProfile(profileId: UUID): IO[List[PropertyRecord]] = read("properties", properties)
     def listingsForProfile(profileId: UUID): IO[List[ListingRecord]] = read("listings", listings)
+    def linkSource(propertyId: UUID): IO[Option[PublicLinkSource]] = IO.pure(None)
     def verificationsForProfile(profileId: UUID): IO[List[VerificationRecord]] = read("verifications", verifications)
     def availabilityForProperty(propertyId: UUID): IO[List[AvailabilityRecord]] =
       read("availability", List(AvailabilityRecord(id(4), propertyId, from, to, Some(10000L), current)))
@@ -83,7 +84,7 @@ class ProfileSuite extends munit.FunSuite {
     assertEquals(repo.calls, readsBefore)
   }
 
-  test("public JSON excludes private owner data and retains hidden links scoped to their property") {
+  test("public JSON excludes private owner data and unpublished links") {
     val unlinked = property.copy(id = id(10), title = "No links")
     val repo = new StubRepository(properties = List(property, unlinked), listings = List(hiddenListing))
     val result = service(repo).publicProfile("  PARROT-TEST  ").unsafeRunSync().toOption.get
@@ -95,8 +96,7 @@ class ProfileSuite extends munit.FunSuite {
     val publicProperties = json.hcursor.downField("properties").focus.get.asArray.get
     assertEquals(publicProperties.head.asObject.get.keys.toSet,
       Set("id", "title", "city", "accommodationType", "bedrooms", "sleeps", "minStayDays", "createdAt", "listings"))
-    assertEquals(result.properties.head.listings.map(_.id), List(hiddenListing.id.toString))
-    assertEquals(result.properties.head.listings.head.showInSearch, false)
+    assertEquals(result.properties.head.listings, Nil)
     assertEquals(result.properties(1).listings, Nil)
     assert(!json.noSpaces.contains(owner.contact))
     assert(!json.noSpaces.contains("Private address"))

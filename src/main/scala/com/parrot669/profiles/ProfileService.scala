@@ -138,7 +138,9 @@ final class ProfileService[F[_]: Async](repo: ProfileRepository[F], currentTime:
       case None => fail[PublicProfilePage](NotFound("profile not found"))
       case Some(profile) =>
         (repo.propertiesForProfile(profile.id), repo.listingsForProfile(profile.id), repo.verificationsForProfile(profile.id), now)
-          .mapN { (properties, listings, verifications, current) =>
+          .tupled.flatMap { case (properties, listings, verifications, current) =>
+          properties.traverse(property => repo.linkSource(property.id).map(property.id -> _)).map { sources =>
+            val byProperty = sources.toMap
             val publicProperties = properties.map { property =>
               PublicProperty(
                 id = property.id.toString,
@@ -151,7 +153,7 @@ final class ProfileService[F[_]: Async](repo: ProfileRepository[F], currentTime:
                 createdAt = property.createdAt.toString,
                 listings = listings
                   .filter(_.propertyId == property.id)
-                  .map(toPublicListing)
+                  .flatMap(listing => PublicLinks.published(listing, byProperty.getOrElse(property.id, None), current))
               )
             }
 
@@ -176,6 +178,7 @@ final class ProfileService[F[_]: Async](repo: ProfileRepository[F], currentTime:
               properties = publicProperties,
               verifications = publicVerifications
             ).asRight[ServiceError]
+          }
           }
     }
 }

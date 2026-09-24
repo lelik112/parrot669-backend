@@ -1,7 +1,7 @@
 package com.parrot669.search
 
 import cats.effect.Async
-import com.parrot669.domain.{ListingRecord, LocationCountry}
+import com.parrot669.domain.{ListingRecord, LocationCountry, PublicLinkSource, PublicLinks}
 import doobie._
 import doobie.implicits._
 import doobie.postgres.implicits._
@@ -14,6 +14,7 @@ trait SearchRepository[F[_]] {
   def locationCities(countryCode: String): F[List[LocationCity]]
   def propertyCleaningFee(propertyId: UUID): F[Option[Long]]
   def listingsForProperty(propertyId: UUID): F[List[ListingRecord]]
+  def linkSource(propertyId: UUID): F[Option[PublicLinkSource]]
   def searchAvailable(
       countryCode: String,
       city: String,
@@ -57,6 +58,9 @@ final class DoobieSearchRepository[F[_]: Async](xa: Transactor[F]) extends Searc
       where property_id = $propertyId
       order by created_at asc
     """.query[ListingRecord].to[List].transact(xa)
+
+  def linkSource(propertyId: UUID): F[Option[PublicLinkSource]] =
+    PublicLinks.source(propertyId).transact(xa)
 
   def searchAvailable(
       countryCode: String,

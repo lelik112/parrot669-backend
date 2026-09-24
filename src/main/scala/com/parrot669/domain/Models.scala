@@ -156,7 +156,8 @@ final case class PublicListing(
     url: String,
     cleaningFeeCents: Option[Long],
     showInSearch: Boolean,
-    createdAt: String
+    createdAt: String,
+    calendarControlStatus: Option[String] = None
 )
 
 final case class PublicProperty(
