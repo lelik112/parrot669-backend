@@ -15,38 +15,11 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
   def health: F[Boolean] =
     sql"select true".query[Boolean].unique.transact(xa)
 
-  def unavailabilityForProperty(propertyId: UUID): F[List[UnavailabilityRecord]] =
-    sql"""select id, property_id, date_from, date_to, created_at
-           from unavailability_periods where property_id = $propertyId
-           order by date_from, date_to, id""".query[UnavailabilityRecord].to[List].transact(xa)
-
-  def findProfile(profileId: UUID): F[Option[ProfileRecord]] =
-    sql"""
-      select id, parrot_id, display_name, contact, created_at
-      from profiles
-      where id = $profileId
-    """.query[ProfileRecord].option.transact(xa)
-
-  def findProfileByParrotId(parrotId: String): F[Option[ProfileRecord]] =
-    sql"""
-      select id, parrot_id, display_name, contact, created_at
-      from profiles
-      where upper(parrot_id) = upper($parrotId)
-    """.query[ProfileRecord].option.transact(xa)
-
   def propertyOwnerProfileId(propertyId: UUID): F[Option[UUID]] =
     sql"select profile_id from properties where id = $propertyId"
       .query[UUID]
       .option
       .transact(xa)
-
-  def availabilityForProperty(propertyId: UUID): F[List[AvailabilityRecord]] =
-    sql"""
-      select id, property_id, date_from, date_to, nightly_price_cents, created_at
-      from availability_periods
-      where property_id = $propertyId
-      order by date_from asc, date_to asc
-    """.query[AvailabilityRecord].to[List].transact(xa)
 
   def listingsForProperty(propertyId: UUID): F[List[ListingRecord]] =
     sql"""
@@ -96,15 +69,6 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
       from external_calendars
       where id = $calendarId
     """.query[ExternalCalendarRecord].option.transact(xa)
-
-  def externalCalendarsForProperty(propertyId: UUID): F[List[ExternalCalendarRecord]] =
-    sql"""
-      select id, property_id, provider, ical_url, status,
-             last_synced_at, last_success_at, last_error, created_at, updated_at, enabled
-      from external_calendars
-      where property_id = $propertyId
-      order by created_at asc
-    """.query[ExternalCalendarRecord].to[List].transact(xa)
 
   def allExternalCalendars: F[List[ExternalCalendarRecord]] =
     sql"""
@@ -331,29 +295,5 @@ final class ParrotRepository[F[_]: Async](xa: Transactor[F]) {
     tx.transact(xa)
   }
 
-  def propertiesForProfile(profileId: UUID): F[List[PropertyRecord]] =
-    sql"""
-      select id, profile_id, title, city, accommodation_type, bedrooms, sleeps, min_stay_days, cleaning_fee_cents, created_at,
-             country_code, country, address, latitude, longitude, place_id, street, house_number, address_result_type
-      from properties
-      where profile_id = $profileId
-      order by created_at asc
-    """.query[PropertyRecord].to[List].transact(xa)
 
-  def listingsForProfile(profileId: UUID): F[List[ListingRecord]] =
-    sql"""
-      select l.id, l.property_id, l.platform, l.external_id, l.url, l.cleaning_fee_cents, l.show_in_search, l.created_at
-      from external_listings l
-      join properties p on p.id = l.property_id
-      where p.profile_id = $profileId
-      order by l.created_at asc
-    """.query[ListingRecord].to[List].transact(xa)
-
-  def verificationsForProfile(profileId: UUID): F[List[VerificationRecord]] =
-    sql"""
-      select id, profile_id, listing_id, claim, method, verified_at, expires_at, challenge_id
-      from verifications
-      where profile_id = $profileId
-      order by verified_at desc
-    """.query[VerificationRecord].to[List].transact(xa)
 }

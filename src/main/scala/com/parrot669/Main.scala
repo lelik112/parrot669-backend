@@ -15,6 +15,7 @@ import com.parrot669.service.{PasswordResetEmailSender, PasswordResetService}
 import com.parrot669.integration.{LocationIqClient, HttpIcalFetcher}
 import com.parrot669.messaging.{MessagingRepository, MessagingRoutes, MessagingService}
 import com.parrot669.messaging.{EmailNotificationRepository, EmailNotificationWorker, MessageEmailSender}
+import com.parrot669.profiles.{DoobieProfileRepository, ProfileRoutes, ProfileService}
 import com.parrot669.repo.{AuthRepository, ParrotRepository}
 import com.parrot669.search.{DoobieSearchRepository, SearchRoutes, SearchService}
 import com.parrot669.service.{AuthService, EmailSender, EmailVerificationService, GeocodingService, ParrotService, ResendEmailSender}
@@ -46,6 +47,7 @@ object Main extends IOApp.Simple {
         authRepo = new AuthRepository[IO](xa)
         icalFetcher = new HttpIcalFetcher[IO](allowLocalhost = config.environment == "test")
         service = new ParrotService[IO](repo, icalFetcher)
+        profiles = ProfileService.live[IO](new DoobieProfileRepository[IO](xa))
         properties = new PropertyService[IO](new PropertyRepository[IO](xa))
         search = new SearchService[IO](new DoobieSearchRepository[IO](xa))
         availability = new AvailabilityService[IO](new DoobieAvailabilityRepository[IO](xa))
@@ -70,7 +72,8 @@ object Main extends IOApp.Simple {
           geocodingService,
           config.adminToken,
           secureCookies = config.environment == "prod"
-        ).routes <+> new SearchRoutes[IO](search).routes <+>
+        ).routes <+> new ProfileRoutes[IO](profiles, authService.authenticate).routes <+>
+          new SearchRoutes[IO](search).routes <+>
           new AvailabilityRoutes[IO](availability, authService.authenticate).routes <+>
           new PropertyRoutes[IO](properties, authService.authenticate).routes <+>
           new MessagingRoutes[IO](messaging, authService).routes <+>

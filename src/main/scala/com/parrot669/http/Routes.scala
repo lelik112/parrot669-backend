@@ -93,11 +93,6 @@ final class Routes[F[_]: Async](
         Ok(authService.currentUser(context))
       }
 
-    case request @ GET -> Root / "api" / "dashboard" =>
-      authenticated(request) { context =>
-        service.hostDashboard(context.profileId, context.profileId).flatMap(result => respond(result))
-      }
-
     case GET -> Root / "api" / "geocode" / "countries" =>
       Ok(GeocodingService.countries).map(_.putHeaders(Header.Raw(ci"Cache-Control", "public, max-age=86400")))
 
@@ -174,7 +169,5 @@ final class Routes[F[_]: Async](
             service.markChallengePassed(challengeId).flatMap(result => respond(result))
         }
 
-    case GET -> Root / "api" / "p" / parrotId =>
-      service.publicProfile(parrotId).flatMap(result => respond(result))
   }
 }
