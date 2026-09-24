@@ -98,38 +98,6 @@ final class Routes[F[_]: Async](
         service.hostDashboard(context.profileId, context.profileId).flatMap(result => respond(result))
       }
 
-    case request @ POST -> Root / "api" / "properties" =>
-      authenticated(request) { context =>
-        decode[CreatePropertyRequest](request) { body =>
-          service
-            .createProperty(context.profileId, context.profileId, body)
-            .flatMap(result => respond(result, created = true))
-        }
-      }
-
-    case request @ PUT -> Root / "api" / "properties" / propertyIdRaw =>
-      authenticated(request) { context =>
-        parseUuid(propertyIdRaw) match {
-          case Left(error) => respondError(error)
-          case Right(propertyId) =>
-            decode[UpdatePropertyRequest](request) { body =>
-              service.updateProperty(propertyId, context.profileId, body).flatMap(result => respond(result))
-            }
-        }
-      }
-
-    case request @ DELETE -> Root / "api" / "properties" / propertyIdRaw =>
-      authenticated(request) { context =>
-        parseUuid(propertyIdRaw) match {
-          case Left(error) => respondError(error)
-          case Right(propertyId) =>
-            service.deleteProperty(propertyId, context.profileId).flatMap {
-              case Right(_)    => NoContent()
-              case Left(error) => respondError(error)
-            }
-        }
-      }
-
     case GET -> Root / "api" / "geocode" / "countries" =>
       Ok(GeocodingService.countries).map(_.putHeaders(Header.Raw(ci"Cache-Control", "public, max-age=86400")))
 
@@ -139,42 +107,6 @@ final class Routes[F[_]: Async](
         geocodingService.autocomplete(params.get("q"), params.get("type"), params.get("country"), params.get("cityId"), params.get("city"), params.get("bounds"))
           .flatMap(result => respond(result))
       }.map(_.putHeaders(Header.Raw(ci"Cache-Control", "no-store")))
-
-    case request @ POST -> Root / "api" / "properties" / propertyIdRaw / "listings" =>
-      authenticated(request) { context =>
-        parseUuid(propertyIdRaw) match {
-          case Left(error) => respondError(error)
-          case Right(propertyId) =>
-            decode[AddListingRequest](request) { body =>
-              service
-                .addListing(propertyId, context.profileId, body)
-                .flatMap(result => respond(result, created = true))
-            }
-        }
-      }
-
-    case request @ PUT -> Root / "api" / "listings" / listingIdRaw =>
-      authenticated(request) { context =>
-        parseUuid(listingIdRaw) match {
-          case Left(error) => respondError(error)
-          case Right(listingId) =>
-            decode[UpdateListingRequest](request) { body =>
-              service.updateListing(listingId, context.profileId, body).flatMap(result => respond(result))
-            }
-        }
-      }
-
-    case request @ DELETE -> Root / "api" / "listings" / listingIdRaw =>
-      authenticated(request) { context =>
-        parseUuid(listingIdRaw) match {
-          case Left(error) => respondError(error)
-          case Right(listingId) =>
-            service.deleteListing(listingId, context.profileId).flatMap {
-              case Right(_)    => NoContent()
-              case Left(error) => respondError(error)
-            }
-        }
-      }
 
     case request @ POST -> Root / "api" / "properties" / propertyIdRaw / "calendars" =>
       authenticated(request) { context =>

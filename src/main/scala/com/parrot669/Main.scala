@@ -9,6 +9,7 @@ import com.parrot669.calendarverification.{CalendarVerificationRepository, Calen
 import com.parrot669.http.Routes
 import com.parrot669.housing.{AvailabilityRoutes, AvailabilityService, DoobieAvailabilityRepository}
 import com.parrot669.http.PasswordResetRoutes
+import com.parrot669.housing.{PropertyRepository, PropertyRoutes, PropertyService}
 import com.parrot669.repo.PasswordResetRepository
 import com.parrot669.service.{PasswordResetEmailSender, PasswordResetService}
 import com.parrot669.integration.{LocationIqClient, HttpIcalFetcher}
@@ -45,6 +46,7 @@ object Main extends IOApp.Simple {
         authRepo = new AuthRepository[IO](xa)
         icalFetcher = new HttpIcalFetcher[IO](allowLocalhost = config.environment == "test")
         service = new ParrotService[IO](repo, icalFetcher)
+        properties = new PropertyService[IO](new PropertyRepository[IO](xa))
         search = new SearchService[IO](new DoobieSearchRepository[IO](xa))
         availability = new AvailabilityService[IO](new DoobieAvailabilityRepository[IO](xa))
         calendarVerification = CalendarVerificationService.live[IO](new CalendarVerificationRepository[IO](xa), icalFetcher)
@@ -70,6 +72,7 @@ object Main extends IOApp.Simple {
           secureCookies = config.environment == "prod"
         ).routes <+> new SearchRoutes[IO](search).routes <+>
           new AvailabilityRoutes[IO](availability, authService.authenticate).routes <+>
+          new PropertyRoutes[IO](properties, authService.authenticate).routes <+>
           new MessagingRoutes[IO](messaging, authService).routes <+>
           new PasswordResetRoutes[IO](recovery, secureCookies = config.environment == "prod").routes <+>
           new CalendarVerificationRoutes[IO](calendarVerification, authService).routes
