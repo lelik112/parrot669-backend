@@ -1,6 +1,7 @@
 package com.parrot669.http
 
 import cats.effect.Async
+import cats.syntax.all._
 import com.parrot669.domain._
 import com.parrot669.service.{AuthService, GeocodingService, ParrotService}
 import io.circe.generic.auto._
