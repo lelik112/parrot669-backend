@@ -5,7 +5,7 @@ import cats.effect.unsafe.implicits.global
 import com.parrot669.domain._
 import com.parrot669.service.ServiceError
 import io.circe.Json
-import org.http4s.{Header, Method, Request, Response, Status, Uri}
+import org.http4s.{EntityEncoder, Header, Method, Request, Response, Status, Uri}
 import org.http4s.circe.CirceEntityCodec._
 import org.postgresql.util.{PSQLException, ServerErrorMessage}
 import org.typelevel.ci.CIStringSyntax
@@ -70,6 +70,14 @@ class AvailabilitySuite extends munit.FunSuite {
   }
 
   private def service(repo: StubRepository) = new AvailabilityService[IO](repo)
+  private def rawRequest(method: Method, path: String, body: String): Request[IO] =
+    Request[IO](method, Uri.unsafeFromString(path))
+      .withEntity(body)(EntityEncoder.stringEncoder[IO])
+      .putHeaders(
+        Header.Raw(ci"Content-Type", "application/json"),
+        Header.Raw(ci"Cookie", "other=value; parrot_session_extra=wrong; parrot_session=first; parrot_session=second")
+      )
+
   private def request(
       repo: StubRepository,
       method: Method,
@@ -78,17 +86,24 @@ class AvailabilitySuite extends munit.FunSuite {
       authenticate: String => IO[Either[ServiceError, AuthContext]] = _ => IO.pure(Right(context))
   ): Response[IO] = {
     val app = new AvailabilityRoutes[IO](service(repo), authenticate).routes.orNotFound
-    app(Request[IO](method, Uri.unsafeFromString(path)).withEntity(body).putHeaders(
-      Header.Raw(ci"Content-Type", "application/json"),
-      Header.Raw(ci"Cookie", "other=value; parrot_session_extra=wrong; parrot_session=first; parrot_session=second")
-    )).unsafeRunSync()
+    app(rawRequest(method, path, body)).unsafeRunSync()
   }
+  private def assertStatus(response: Response[IO], status: Status): Unit =
+    assertEquals(response.status, status, s"Response body: ${response.bodyText.compile.string.unsafeRunSync()}")
+
   private def assertError(response: Response[IO], status: Status, message: String): Unit = {
-    assertEquals(response.status, status)
+    assertStatus(response, status)
     assertEquals(response.as[Json].unsafeRunSync(), Json.obj("error" -> Json.fromString(message)))
   }
   private def postgresError(state: String, constraint: String): PSQLException =
     new PSQLException(new ServerErrorMessage(s"SERROR\u0000C$state\u0000Mtest failure\u0000n$constraint\u0000\u0000"))
+
+  test("route fixture sends JSON objects and malformed JSON as raw bodies") {
+    List("""{"from":"2030-06-01","to":"2030-06-04"}""", "broken").foreach { body =>
+      val encoded = rawRequest(Method.POST, s"/api/properties/$property/availability", body)
+      assertEquals(encoded.bodyText.compile.string.unsafeRunSync(), body)
+    }
+  }
 
   test("availability validates before ownership while manual blocks check ownership first") {
     val repo = new StubRepository
@@ -224,18 +239,18 @@ class AvailabilitySuite extends munit.FunSuite {
     val body = """{"from":"2030-06-01","to":"2030-06-04","nightlyPriceCents":100}"""
     List("availability", "unavailability").foreach { kind =>
       val created = request(repo, Method.POST, s"/api/properties/$property/$kind", body)
-      assertEquals(created.status, Status.Created)
+      assertStatus(created, Status.Created)
       val json = created.as[Json].unsafeRunSync()
       val fields = Set("id", "propertyId", "from", "to", "createdAt") ++
         (if (kind == "availability") Set("nightlyPriceCents") else Set.empty[String])
       assertEquals(json.asObject.get.keys.toSet, fields)
       assertEquals(json.hcursor.get[String]("propertyId"), Right(property.toString))
       val listed = request(repo, Method.GET, s"/api/properties/$property/$kind")
-      assertEquals(listed.status, Status.Ok)
+      assertStatus(listed, Status.Ok)
       assertEquals(listed.as[Json].unsafeRunSync(), Json.arr(json))
-      assertEquals(request(repo, Method.PUT, s"/api/$kind/$period", body).status, Status.Ok)
+      assertStatus(request(repo, Method.PUT, s"/api/$kind/$period", body), Status.Ok)
       val deleted = request(repo, Method.DELETE, s"/api/$kind/$period")
-      assertEquals(deleted.status, Status.NoContent)
+      assertStatus(deleted, Status.NoContent)
       assertEquals(deleted.bodyText.compile.string.unsafeRunSync(), "")
     }
   }
