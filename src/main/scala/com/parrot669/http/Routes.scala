@@ -10,9 +10,6 @@ import org.http4s.circe.CirceEntityCodec._
 import org.http4s.dsl.Http4sDsl
 import org.typelevel.ci.CIStringSyntax
 
-import java.util.UUID
-import scala.util.Try
-
 final class Routes[F[_]: Async](
     service: ParrotService[F],
     authService: AuthService[F],
@@ -28,15 +25,6 @@ final class Routes[F[_]: Async](
     request.headers.headers
       .find(_.name.toString.equalsIgnoreCase(name))
       .map(_.value)
-      .getOrElse("")
-
-  private def sessionToken(request: Request[F]): String =
-    header(request, "Cookie")
-      .split(";")
-      .iterator
-      .map(_.trim)
-      .find(_.startsWith(sessionCookieName + "="))
-      .map(_.drop(sessionCookieName.length + 1))
       .getOrElse("")
 
   private def sessionCookie(rawToken: String): Header.Raw = {
@@ -55,27 +43,11 @@ final class Routes[F[_]: Async](
     )
   }
 
-  private def parseUuid(raw: String): Either[ServiceError, UUID] =
-    Try(UUID.fromString(raw)).toEither.leftMap(_ => ServiceError.Invalid("invalid UUID"))
-
   private val responses = new HttpResponses[F]
   import responses.{respond, respondError}
 
-  private def decode[A: io.circe.Decoder](request: Request[F])(
-      f: A => F[Response[F]]
-  ): F[Response[F]] =
-    request.as[A].attempt.flatMap {
-      case Left(_)      => BadRequest(ErrorResponse("invalid JSON body"))
-      case Right(value) => f(value)
-    }
-
-  private def authenticated(request: Request[F])(
-      f: AuthContext => F[Response[F]]
-  ): F[Response[F]] =
-    authService.authenticate(sessionToken(request)).flatMap {
-      case Right(context) => f(context)
-      case Left(error)    => respondError(error)
-    }
+  private val requests = new OwnerRequests[F](authService.authenticate)
+  import requests.{authenticated, decode, parseUuid, sessionToken}
 
   val routes: HttpRoutes[F] = HttpRoutes.of[F] {
     case GET -> Root / "health" =>
@@ -155,93 +127,6 @@ final class Routes[F[_]: Async](
               case Right(_)    => NoContent()
               case Left(error) => respondError(error)
             }
-        }
-      }
-
-    case request @ GET -> Root / "api" / "properties" / propertyIdRaw / "availability" =>
-      authenticated(request) { context =>
-        parseUuid(propertyIdRaw) match {
-          case Left(error) => respondError(error)
-          case Right(propertyId) =>
-            service.listAvailability(propertyId, context.profileId).flatMap(result => respond(result))
-        }
-      }
-
-    case request @ POST -> Root / "api" / "properties" / propertyIdRaw / "availability" =>
-      authenticated(request) { context =>
-        parseUuid(propertyIdRaw) match {
-          case Left(error) => respondError(error)
-          case Right(propertyId) =>
-            decode[AddAvailabilityRequest](request) { body =>
-              service
-                .addAvailability(propertyId, context.profileId, body)
-                .flatMap(result => respond(result, created = true))
-            }
-        }
-      }
-
-    case request @ PUT -> Root / "api" / "availability" / availabilityIdRaw =>
-      authenticated(request) { context =>
-        parseUuid(availabilityIdRaw) match {
-          case Left(error) => respondError(error)
-          case Right(availabilityId) =>
-            decode[AddAvailabilityRequest](request) { body =>
-              service
-                .updateAvailability(availabilityId, context.profileId, body)
-                .flatMap(result => respond(result))
-            }
-        }
-      }
-
-    case request @ DELETE -> Root / "api" / "availability" / availabilityIdRaw =>
-      authenticated(request) { context =>
-        parseUuid(availabilityIdRaw) match {
-          case Left(error) => respondError(error)
-          case Right(availabilityId) =>
-            service.deleteAvailability(availabilityId, context.profileId).flatMap {
-              case Right(_)    => NoContent()
-              case Left(error) => respondError(error)
-            }
-        }
-      }
-
-    case request @ GET -> Root / "api" / "properties" / propertyIdRaw / "unavailability" =>
-      authenticated(request) { context =>
-        parseUuid(propertyIdRaw) match {
-          case Left(error) => respondError(error)
-          case Right(propertyId) =>
-            service.listUnavailability(propertyId, context.profileId).flatMap(result => respond(result))
-        }
-      }
-
-    case request @ POST -> Root / "api" / "properties" / propertyIdRaw / "unavailability" =>
-      authenticated(request) { context =>
-        parseUuid(propertyIdRaw) match {
-          case Left(error) => respondError(error)
-          case Right(propertyId) => decode[UnavailabilityRequest](request) { body =>
-            service.addUnavailability(propertyId, context.profileId, body).flatMap(result => respond(result, created = true))
-          }
-        }
-      }
-
-    case request @ PUT -> Root / "api" / "unavailability" / periodIdRaw =>
-      authenticated(request) { context =>
-        parseUuid(periodIdRaw) match {
-          case Left(error) => respondError(error)
-          case Right(id) => decode[UnavailabilityRequest](request) { body =>
-            service.updateUnavailability(id, context.profileId, body).flatMap(result => respond(result))
-          }
-        }
-      }
-
-    case request @ DELETE -> Root / "api" / "unavailability" / periodIdRaw =>
-      authenticated(request) { context =>
-        parseUuid(periodIdRaw) match {
-          case Left(error) => respondError(error)
-          case Right(id) => service.deleteUnavailability(id, context.profileId).flatMap {
-            case Right(_) => NoContent()
-            case Left(error) => respondError(error)
-          }
         }
       }
 
