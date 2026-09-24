@@ -23,8 +23,8 @@ class AuthRoutesSuite extends munit.FunSuite {
       app(Request[IO](Method.POST, Uri.unsafeFromString(s"/api/auth/$action"))
         .withEntity("not json")).map(_.status)
     }
-    val statuses = (malformed.sequence <*>
-      app(Request[IO](Method.GET, Uri.unsafeFromString("/api/auth/me"))).map(_.status)).unsafeRunSync()
+    val statuses = (malformed.sequence,
+      app(Request[IO](Method.GET, Uri.unsafeFromString("/api/auth/me"))).map(_.status)).tupled.unsafeRunSync()
     assertEquals(statuses._1, List.fill(3)(Status.BadRequest))
     assertEquals(statuses._2, Status.Unauthorized)
   }
