@@ -9,6 +9,7 @@ import java.util.UUID
 
 trait ProfileRepository[F[_]] {
   def findProfile(profileId: UUID): F[Option[ProfileRecord]]
+  def updateDisplayName(profileId: UUID, accountId: UUID, displayName: String): F[Option[ProfileRecord]]
   def findProfileByParrotId(parrotId: String): F[Option[ProfileRecord]]
   def propertiesForProfile(profileId: UUID): F[List[PropertyRecord]]
   def listingsForProfile(profileId: UUID): F[List[ListingRecord]]
@@ -21,6 +22,12 @@ trait ProfileRepository[F[_]] {
 }
 
 final class DoobieProfileRepository[F[_]: Async](xa: Transactor[F]) extends ProfileRepository[F] {
+
+  def updateDisplayName(profileId: UUID, accountId: UUID, displayName: String): F[Option[ProfileRecord]] =
+    sql"""update profiles set display_name = $displayName
+           where id = $profileId and account_id = $accountId
+           returning id, parrot_id, display_name, contact, created_at"""
+      .query[ProfileRecord].option.transact(xa)
 
   def linkSource(propertyId: UUID): F[Option[PublicLinkSource]] =
     PublicLinks.source(propertyId).transact(xa)

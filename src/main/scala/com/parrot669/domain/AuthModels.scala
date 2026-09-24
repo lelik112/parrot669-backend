@@ -22,6 +22,8 @@ final case class AuthProfile(
     displayName: String
 )
 
+final case class UpdateHostProfileRequest(displayName: String)
+
 final case class AuthUser(
     accountId: String,
     email: String,

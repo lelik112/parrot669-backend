@@ -18,6 +18,17 @@ final class ProfileService[F[_]: Async](repo: ProfileRepository[F], currentTime:
   private def fail[A](error: ServiceError): F[Either[ServiceError, A]] =
     Async[F].pure(Left(error))
 
+  def updateHostProfile(context: AuthContext, displayName: String): F[Either[ServiceError, PublicProfile]] = {
+    val name = normalized(displayName)
+    if (name.isEmpty) fail(Invalid("displayName is required"))
+    else if (name.length > 120) fail(Invalid("displayName is too long"))
+    else if (name.exists(c => Character.isISOControl(c))) fail(Invalid("displayName contains control characters"))
+    else repo.updateDisplayName(context.profileId, context.accountId, name).map {
+      case None => Left(NotFound("profile not found"))
+      case Some(profile) => Right(PublicProfile(profile.parrotId, profile.displayName, profile.createdAt.toString))
+    }
+  }
+
   private def authorize(profileId: UUID, currentProfileId: UUID): F[Either[ServiceError, Unit]] =
     if (profileId == currentProfileId)
       Async[F].pure(Right[ServiceError, Unit](()))

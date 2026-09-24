@@ -34,9 +34,17 @@ class ProfileSuite extends munit.FunSuite {
       events: List[ExternalCalendarEventRecord] = Nil
   ) extends ProfileRepository[IO] {
     var calls = Vector.empty[String]
+    var savedProfile = profile
     private def read[A](name: String, value: A): IO[A] = IO { calls = calls :+ name; value }
-    def findProfile(profileId: UUID): IO[Option[ProfileRecord]] = read("profile", profile)
-    def findProfileByParrotId(parrotId: String): IO[Option[ProfileRecord]] = read(s"public:$parrotId", profile)
+    def findProfile(profileId: UUID): IO[Option[ProfileRecord]] = read("profile", savedProfile)
+    def updateDisplayName(profileId: UUID, accountId: UUID, displayName: String): IO[Option[ProfileRecord]] = IO {
+      calls :+= "update"
+      if (profileId == owner.id && accountId == id(9)) {
+        savedProfile = profile.map(_.copy(displayName = displayName))
+        savedProfile
+      } else None
+    }
+    def findProfileByParrotId(parrotId: String): IO[Option[ProfileRecord]] = read(s"public:$parrotId", savedProfile)
     def propertiesForProfile(profileId: UUID): IO[List[PropertyRecord]] = read("properties", properties)
     def listingsForProfile(profileId: UUID): IO[List[ListingRecord]] = read("listings", listings)
     def linkSource(propertyId: UUID): IO[Option[PublicLinkSource]] = IO.pure(None)
@@ -54,6 +62,41 @@ class ProfileSuite extends munit.FunSuite {
   private def service(repo: StubRepository): ProfileService[IO] = new ProfileService[IO](repo, IO.pure(current))
   private def dashboard(repo: StubRepository): HostDashboard =
     service(repo).hostDashboard(owner.id, owner.id).unsafeRunSync().toOption.get
+
+  test("only the authenticated profile can change its display name and invalid names do not write") {
+    val repo = new StubRepository()
+    val ownerContext = AuthContext(id(9), "private@example.test", owner.id, owner.parrotId, owner.displayName, "host")
+    val updated = service(repo).updateHostProfile(ownerContext, "  New host  ").unsafeRunSync().toOption.get
+    assertEquals(updated.displayName, "New host")
+    assertEquals(repo.savedProfile.map(_.displayName), Some("New host"))
+    val other = ownerContext.copy(accountId = id(10))
+    assertEquals(service(repo).updateHostProfile(other, "Imposter").unsafeRunSync(),
+      Left(ServiceError.NotFound("profile not found")))
+    assertEquals(service(repo).updateHostProfile(ownerContext, "   ").unsafeRunSync(),
+      Left(ServiceError.Invalid("displayName is required")))
+    assertEquals(service(repo).updateHostProfile(ownerContext, "x" * 121).unsafeRunSync(),
+      Left(ServiceError.Invalid("displayName is too long")))
+    assertEquals(repo.savedProfile.map(_.displayName), Some("New host"))
+    assertEquals(repo.calls, Vector("update", "update"))
+    val public = service(repo).publicProfile(owner.parrotId).unsafeRunSync().toOption.get.asJson
+    assertEquals(public.hcursor.downField("profile").get[String]("displayName").toOption, Some("New host"))
+    assert(!public.noSpaces.contains("private@example.test"))
+  }
+
+  test("profile update requires a session and returns validation errors as 400") {
+    val ownerContext = AuthContext(id(9), "private@example.test", owner.id, owner.parrotId, owner.displayName, "host")
+    val repo = new StubRepository()
+    val denied = new ProfileRoutes[IO](service(repo), _ => IO.pure(Left(ServiceError.Unauthorized()))).routes.orNotFound
+    val request = Request[IO](Method.PATCH, Uri.unsafeFromString("/api/host/profile"))
+      .withEntity(UpdateHostProfileRequest("Host 2"))
+    assertEquals(denied(request).unsafeRunSync().status, Status.Unauthorized)
+    assertEquals(repo.calls, Vector.empty[String])
+    val allowed = new ProfileRoutes[IO](service(repo), _ => IO.pure(Right(ownerContext))).routes.orNotFound
+    assertEquals(allowed(request.withEntity(UpdateHostProfileRequest(" "))).unsafeRunSync().status, Status.BadRequest)
+    val response = allowed(request).unsafeRunSync()
+    assertEquals(response.status, Status.Ok)
+    assertEquals(response.as[Json].unsafeRunSync().hcursor.get[String]("displayName").toOption, Some("Host 2"))
+  }
 
   test("dashboard ownership is checked before reads and missing own profiles stay 404") {
     val repo = new StubRepository()
