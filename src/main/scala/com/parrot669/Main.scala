@@ -6,6 +6,7 @@ import com.comcast.ip4s.{Host, Port}
 import com.parrot669.config.AppConfig
 import com.parrot669.db.Database
 import com.parrot669.calendarverification.{CalendarVerificationRepository, CalendarVerificationRoutes, CalendarVerificationService}
+import com.parrot669.externalcalendar.{CalendarRepository, CalendarRoutes, CalendarService}
 import com.parrot669.http.{AuthRoutes, Routes}
 import com.parrot669.housing.{AvailabilityRoutes, AvailabilityService, DoobieAvailabilityRepository}
 import com.parrot669.http.PasswordResetRoutes
@@ -27,7 +28,7 @@ import scala.concurrent.duration._
 object Main extends IOApp.Simple {
   private val logger = LoggerFactory.getLogger("com.parrot669.calendar-sync")
 
-  private def calendarSyncLoop(service: ParrotService[IO]): IO[Unit] =
+  private def calendarSyncLoop(service: CalendarService[IO]): IO[Unit] =
     (service.syncAllExternalCalendars.handleErrorWith(error =>
       IO(logger.warn("External calendar sync cycle failed", error))
     ) *> IO.sleep(1.hour)).foreverM
@@ -46,7 +47,8 @@ object Main extends IOApp.Simple {
         repo = new ParrotRepository[IO](xa)
         authRepo = new AuthRepository[IO](xa)
         icalFetcher = new HttpIcalFetcher[IO](allowLocalhost = config.environment == "test")
-        service = new ParrotService[IO](repo, icalFetcher)
+        service = new ParrotService[IO](repo)
+        calendarService = new CalendarService[IO](new CalendarRepository[IO](xa), icalFetcher)
         profiles = ProfileService.live[IO](new DoobieProfileRepository[IO](xa))
         properties = new PropertyService[IO](new PropertyRepository[IO](xa))
         search = new SearchService[IO](new DoobieSearchRepository[IO](xa))
@@ -72,6 +74,7 @@ object Main extends IOApp.Simple {
           geocodingService,
           config.adminToken
         ).routes <+> new AuthRoutes[IO](authService, secureCookies = config.environment == "prod").routes <+>
+          new CalendarRoutes[IO](calendarService, authService).routes <+>
           new ProfileRoutes[IO](profiles, authService.authenticate).routes <+>
           new SearchRoutes[IO](search).routes <+>
           new AvailabilityRoutes[IO](availability, authService.authenticate).routes <+>
@@ -85,7 +88,7 @@ object Main extends IOApp.Simple {
           .withPort(port)
           .withHttpApp(routes.orNotFound)
           .build
-        _ <- Resource.make(calendarSyncLoop(service).start)(_.cancel)
+        _ <- Resource.make(calendarSyncLoop(calendarService).start)(_.cancel)
         _ <- Resource.make(calendarVerification.run.start)(_.cancel)
         _ <- config.resendApiKey.filter(_ => config.environment != "test").fold(Resource.unit[IO]) { key =>
           val notifications = new EmailNotificationRepository[IO](xa, config.resendFrom, config.publicBaseUrl)

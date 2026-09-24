@@ -27,7 +27,7 @@ final class Routes[F[_]: Async](
   import responses.{respond, respondError}
 
   private val requests = new OwnerRequests[F](authService.authenticate)
-  import requests.{authenticated, decode, parseUuid}
+  import requests.{authenticated, parseUuid}
 
   val routes: HttpRoutes[F] = HttpRoutes.of[F] {
     case GET -> Root / "health" =>
@@ -45,51 +45,6 @@ final class Routes[F[_]: Async](
         geocodingService.autocomplete(params.get("q"), params.get("type"), params.get("country"), params.get("cityId"), params.get("city"), params.get("bounds"))
           .flatMap(result => respond(result))
       }.map(_.putHeaders(Header.Raw(ci"Cache-Control", "no-store")))
-
-    case request @ POST -> Root / "api" / "properties" / propertyIdRaw / "calendars" =>
-      authenticated(request) { context =>
-        parseUuid(propertyIdRaw) match {
-          case Left(error) => respondError(error)
-          case Right(propertyId) =>
-            decode[ConnectExternalCalendarRequest](request) { body =>
-              service
-                .connectExternalCalendar(propertyId, context.profileId, body)
-                .flatMap(result => respond(result, created = true))
-            }
-        }
-      }
-
-    case request @ POST -> Root / "api" / "calendars" / calendarIdRaw / "sync" =>
-      authenticated(request) { context =>
-        parseUuid(calendarIdRaw) match {
-          case Left(error) => respondError(error)
-          case Right(calendarId) =>
-            service.syncExternalCalendar(calendarId, context.profileId).flatMap(result => respond(result))
-        }
-      }
-
-    case request @ PUT -> Root / "api" / "calendars" / calendarIdRaw =>
-      authenticated(request) { context =>
-        parseUuid(calendarIdRaw) match {
-          case Left(error) => respondError(error)
-          case Right(calendarId) =>
-            decode[UpdateExternalCalendarRequest](request) { body =>
-              service.updateExternalCalendar(calendarId, context.profileId, body).flatMap(result => respond(result))
-            }
-        }
-      }
-
-    case request @ DELETE -> Root / "api" / "calendars" / calendarIdRaw =>
-      authenticated(request) { context =>
-        parseUuid(calendarIdRaw) match {
-          case Left(error) => respondError(error)
-          case Right(calendarId) =>
-            service.deleteExternalCalendar(calendarId, context.profileId).flatMap {
-              case Right(_) => NoContent()
-              case Left(error) => respondError(error)
-            }
-        }
-      }
 
     case request @ POST -> Root / "api" / "listings" / listingIdRaw / "challenges" =>
       authenticated(request) { context =>
