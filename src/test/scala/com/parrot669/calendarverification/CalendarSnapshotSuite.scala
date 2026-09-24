@@ -29,4 +29,20 @@ class CalendarSnapshotSuite extends munit.FunSuite {
       calendar("BEGIN:VEVENT\nBEGIN:VEVENT\nEND:VEVENT\nEND:VEVENT")).foreach(raw=>
         assert(CalendarSnapshot.parse(raw,floor).isLeft,raw))
   }
+  test("only the full selected range with the expected action proves control") {
+    val from=LocalDate.parse("2030-10-15");val to=LocalDate.parse("2030-10-17")
+    def result(raw: String, expected: Option[String])=CalendarSnapshot.challenge(raw,floor,from,to,expected)
+    val baseline=result(calendar(),None).toOption.get
+    assertEquals(baseline.action,Some("close"))
+    assert(!result(calendar(event("20301019","20301022","SUMMARY:Airbnb (Not available)")),Some("close")).toOption.get.changed)
+    assert(!result(calendar(event("20301015","20301017","SUMMARY:Airbnb (Not available)")),Some("close")).toOption.get.changed)
+    assert(!result(calendar(event("20301015","20301018","SUMMARY:Reserved")),Some("close")).toOption.get.changed)
+    assert(result(calendar(event("20301015","20301018","SUMMARY:Airbnb (Not available)")),Some("close")).toOption.get.changed)
+    assertEquals(result(calendar(event("20301015","20301017","SUMMARY:Airbnb (Not available)")),None),Left("choose_uniform_dates"))
+    assertEquals(result(calendar(event("20301015","20301018","SUMMARY:Reserved")),None),Left("choose_unreserved_dates"))
+    val blocked=calendar(event("20301015","20301018","SUMMARY:Airbnb (Not available)"))
+    assertEquals(result(blocked,None).toOption.get.action,Some("open"))
+    assert(result(calendar(),Some("open")).toOption.get.changed)
+    assert(!result(blocked,Some("open")).toOption.get.changed)
+  }
 }

@@ -37,7 +37,12 @@ final class CalendarVerificationRoutes[F[_]: Async](service: CalendarVerificatio
 
   val routes: HttpRoutes[F] = HttpRoutes.of[F] {
     case req @ GET -> Root / "api" / "calendars" / id / "verification" => handle(req,id)(service.status)
-    case req @ POST -> Root / "api" / "calendars" / id / "verification" / "start" => handle(req,id)(service.start)
+    case req @ POST -> Root / "api" / "calendars" / id / "verification" / "start" =>
+      handle(req,id)((calendar,owner) => req.attemptAs[StartVerificationRequest].value.flatMap {
+        case Left(_) => (Left(ServiceError.Invalid("Choose verification dates (from and to, YYYY-MM-DD)")):
+          Either[ServiceError,CalendarVerificationView]).pure[F]
+        case Right(dates) => service.start(calendar,owner,dates)
+      })
     case req @ POST -> Root / "api" / "calendars" / id / "verification" / "check" => handle(req,id)(service.check)
   }.map(_.putHeaders(Header.Raw(ci"Cache-Control","no-store")))
 }

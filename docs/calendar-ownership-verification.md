@@ -8,7 +8,8 @@ connection, listing-ID matching, hourly/manual synchronization, event imports,
 enable/disable and deletion remain in `ParrotService` unchanged.
 
 The `calendarverification` package reuses `IcalFetcher` and `AirbnbIcal.parse`.
-It adds one table (`V24__calendar_ownership_verification.sql`), a service/repository,
+It adds one table (`V24__calendar_ownership_verification.sql`), three challenge columns
+(`V25__calendar_verification_challenge.sql`), a service/repository,
 private routes and a background worker wired into `Main`. It does not write to
 `external_calendar_events` or change guest availability/search. The legacy
 admin-operated listing challenge is independent; passing it does not grant this
@@ -21,24 +22,31 @@ calendar. Responses use `Cache-Control: no-store`; another owner's calendar is 4
 The Worker exposes these as `/api/host/calendars/...` with its existing Origin guard.
 
 - `GET /api/calendars/{id}/verification`: current status and available actions.
-- `POST /api/calendars/{id}/verification/start`: create an attempt and fetch a fresh
-  baseline from the stored iCal URL. A duplicate Start returns the existing attempt.
+- `POST /api/calendars/{id}/verification/start` with JSON
+  `{ "from": "2030-11-01", "to": "2030-11-02" }`: select owner nights with both
+  dates inclusive, create an attempt and fetch a fresh baseline from the stored
+  iCal URL. Dates must be future/today, ordered, and at most 365 nights. A duplicate
+  Start returns the existing attempt without replacing selected nights.
 - `POST /api/calendars/{id}/verification/check`: immediately fetch/compare, then
   persist automatic retries if no availability change is observed. Duplicate Check
   only returns status; it never adds requests or resets the schedule.
 
-The response includes `status` (`required`, `pending`, `verified`, `failed`, `blocked`),
+The response includes `status` (`required`, `pending`, `verified`, `failed`, `blocked`, `rejected`),
 `attemptId`, `attemptsCount`, `maxAttempts`, `baselineReady`, `checksCount`,
 `startedAt`, `expiresAt`, `nextCheckAt`, `verifiedAt`, `blockedUntil`, `lastError`,
-`canStart` and `canCheck`. Dates are UTC ISO timestamps; the UI uses local display
+`canStart`, `canCheck`, `selectedFrom`, `selectedTo` and `expectedAction` (`close` or `open`).
+The selected dates are plain local calendar dates; timestamps are UTC ISO and the UI uses local display
 time. Error codes are sanitized (`fetch_failed`, `invalid_calendar`, `source_changed`,
-`calendar_disabled`, `expired`, `no_change`). Neither the secret URL, its hash, the
+`calendar_disabled`, `expired`, `no_change`, `choose_unreserved_dates`,
+`choose_uniform_dates`). Neither the secret URL, its hash, the
 baseline nor lease tokens are returned.
 
 ## Attempt and retry semantics
 
-- One attempt starts with a fresh baseline and lasts up to 30 minutes while the
-  owner makes their chosen change in Airbnb. The interface shows its deadline.
+- One attempt saves the selected nights before fetching the baseline. Once a usable
+  snapshot is saved, the server picks one action and the UI shows exactly what to
+  change in Airbnb, with a 30-minute deadline. Pending/Check/reload keep the same
+  selected range and action. A rejected baseline does not use up an attempt.
 - The first Check runs immediately. If unchanged/unavailable, retry at +5, +10 and
   +20 minutes **relative to that first Check**, not +5/+10/+20 cumulatively.
 - The worker checks persisted jobs every 15 seconds with up to four concurrent
@@ -63,20 +71,20 @@ baseline nor lease tokens are returned.
 
 ## What counts as a change
 
-Use a canonical union of all unavailable date ranges, including manually blocked
-Airbnb dates. Merge adjacent/overlapping ranges and ignore order, duplicate events,
-UID, summary, DTSTAMP and other metadata. Only today/future nights relative to the
-fixed UTC date captured at Start participate. Both blocking and reopening dates work;
-an empty complete calendar is valid. An incomplete/malformed iCal is rejected by a
-verification-specific completeness check before the existing parser is called.
+First validate the entire iCal feed. If every selected night is free, ask the owner
+to block all selected nights (`close`). If every selected night is covered by Airbnb's
+`Airbnb (Not available)` events, ask them to open all those nights (`open`). A mixed
+range, reservation, or unknown event is rejected before giving instructions. On Check,
+the full selected range must reach the required opposite state; a change outside the
+range, a partial change, reservation, UID/metadata change or fetch failure is not
+proof. `DTEND` is exclusive in iCal while the owner's last selected night is inclusive.
+The canonical full-calendar snapshot also has to differ from the stored baseline.
 
-The owner chooses the period in Airbnb; there is no prescribed date/status and no
-selected range submitted to PARROT. Consequently, any observed availability change
-within the attempt can pass, including an unrelated new/cancelled reservation or an
-automatic Airbnb rule change. iCal cannot establish who made the change or its exact
-edit timestamp. The status means a change was observed after the fresh baseline; it
-is not cryptographic proof of control. Export delay beyond the retry window can
-cause a legitimate attempt to fail. No OAuth, Airbnb API or scraping is introduced.
+Old V24 verified rows have no selected range and are displayed as `required` until
+a V25 attempt succeeds. V24 pending rows are failed on migration so their old
+whole-feed comparison cannot grant V25 verification. V24 blocked cooldown remains.
+iCal still cannot establish who made the change or the exact edit timestamp; export
+delay beyond the retry window can cause failure. No OAuth, Airbnb API or scraping.
 
 ## Validation
 
