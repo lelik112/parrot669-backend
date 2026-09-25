@@ -20,8 +20,16 @@ final class SearchService[F[_]: Async](repo: SearchRepository[F]) {
   private def fail[A](error: ServiceError): F[Either[ServiceError, A]] =
     Async[F].pure(Left(error))
 
-  private def parseDate(raw: String, field: String): Either[ServiceError, LocalDate] =
-    Try(LocalDate.parse(normalized(raw))).toEither.leftMap(_ => Invalid(s"$field must be YYYY-MM-DD"))
+  private def parseDate(raw: String, field: String): Either[ServiceError, LocalDate] = {
+    val value = normalized(raw)
+    // Keep public dates in the four-digit CE range, safe for PostgreSQL timestamp
+    // and HTML date inputs. LocalDate also accepts extreme, signed years.
+    for {
+      _ <- Either.cond(value.matches("[0-9]{4}-[0-9]{2}-[0-9]{2}") && !value.startsWith("0000-"),
+        (), Invalid(s"$field must be YYYY-MM-DD"))
+      date <- Try(LocalDate.parse(value)).toEither.leftMap(_ => Invalid(s"$field must be YYYY-MM-DD"))
+    } yield date
+  }
 
   private def searchAccommodationType(raw: Option[String]): Either[ServiceError, Option[String]] =
     raw.map(value => normalized(value).toLowerCase).filter(_.nonEmpty) match {
@@ -77,7 +85,9 @@ final class SearchService[F[_]: Async](repo: SearchRepository[F]) {
           Invalid("minPriceCents must be less than or equal to maxPriceCents")
         )
         accommodationType <- searchAccommodationType(accommodationTypeRaw)
-        stayDays = ChronoUnit.DAYS.between(from, to).toInt
+        nights = ChronoUnit.DAYS.between(from, to)
+        _ <- Either.cond(nights <= 366L, (), Invalid("A search request can cover at most 366 nights"))
+        stayDays = nights.toInt
       } yield (from, to, stayDays, accommodationType)
 
     validated match {
