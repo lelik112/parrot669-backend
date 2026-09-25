@@ -91,9 +91,10 @@ final class MessagingRepository[F[_]: Async](xa: Transactor[F]) {
           } yield saved
       }
 
+  // Legacy API compatibility: contact is available for every searchable property.
+  // Existing false rows are intentionally ignored; the column can be retired later.
   def settings(actor: UUID): F[MessagingSettings] =
-    sql"select accepting_new_conversations from messaging_settings where profile_id = $actor"
-      .query[Boolean].option.map(v => MessagingSettings(v.getOrElse(false))).transact(xa)
+    MessagingSettings(true).pure[F]
 
   def emailSettings(actor: UUID): F[EmailNotificationSettings] =
     sql"select email_enabled, email_language from messaging_settings where profile_id = $actor"
@@ -106,18 +107,14 @@ final class MessagingRepository[F[_]: Async](xa: Transactor[F]) {
       .update.run.as(value).transact(xa)
 
   def updateSettings(actor: UUID, value: MessagingSettings): F[MessagingSettings] =
-    sql"""insert into messaging_settings (profile_id, accepting_new_conversations)
-      values ($actor, ${value.acceptingNewConversations})
-      on conflict (profile_id) do update
-      set accepting_new_conversations = excluded.accepting_new_conversations"""
-      .update.run.as(value).transact(xa)
+    settings(actor)
 
   def contactOptions(propertyId: UUID): F[Either[ServiceError, ContactOptions]] = result {
-    sql"""select coalesce(s.accepting_new_conversations, false), p.title, p.profile_id, owner.display_name
+    sql"""select p.title, p.profile_id, owner.display_name
       from properties p join profiles owner on owner.id = p.profile_id
-      left join messaging_settings s on s.profile_id = p.profile_id where p.id = $propertyId"""
-      .query[(Boolean, String, UUID, String)].option.flatMap(required(_, NotFound("property not found")))
-      .map { case (enabled, title, owner, name) => ContactOptions(propertyId.toString, enabled, title, owner.toString, name) }
+      where p.id = $propertyId"""
+      .query[(String, UUID, String)].option.flatMap(required(_, NotFound("property not found")))
+      .map { case (title, owner, name) => ContactOptions(propertyId.toString, true, title, owner.toString, name) }
   }
 
   private[messaging] def start(
@@ -137,10 +134,6 @@ final class MessagingRepository[F[_]: Async](xa: Transactor[F]) {
         case Some(value) => value.pure[ConnectionIO]
         case None =>
           for {
-            enabled <- sql"""select accepting_new_conversations from messaging_settings
-              where profile_id = $host for share""".query[Boolean].option
-            _ <- if (enabled.contains(true)) ().pure[ConnectionIO]
-                 else reject[Unit](Conflict("host is not accepting new conversations"))
             count <- sql"""select count(*) from messaging_conversations where guest_profile_id = $actor
               and created_at > clock_timestamp() - interval '1 hour'""".query[Long].unique
             _ <- if (count < 10) ().pure[ConnectionIO]
