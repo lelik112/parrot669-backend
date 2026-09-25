@@ -313,7 +313,7 @@ test "$qa_me" = "200"
 for path in /api/auth/me /api/search /api/messaging/unread /api/dashboard; do
   status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
     "${qa_header[@]}" "http://localhost:$HTTP_PORT$path")
-  test "$status" = "403"
+  test "$status" = "401"
   status=$(curl --silent --output /dev/null --write-out '%{http_code}' -b "$OTHER_COOKIE_JAR" \
     "${qa_header[@]}" "http://localhost:$HTTP_PORT$path")
   test "$status" = "403"
