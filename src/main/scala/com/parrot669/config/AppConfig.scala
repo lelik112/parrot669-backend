@@ -17,7 +17,8 @@ final case class AppConfig(
     resendApiKey: Option[String],
     resendFrom: String,
     publicBaseUrl: String,
-    locationIqApiKey: Option[String]
+    locationIqApiKey: Option[String],
+    qaWorkerSecret: Option[String]
 )
 
 object AppConfig {
@@ -65,6 +66,12 @@ object AppConfig {
         (),
         new IllegalArgumentException("RESEND_API_KEY is required in prod")
       )
+      qaSecret = nonEmpty(env, "PARROT_QA_WORKER_SECRET")
+      _ <- Either.cond(
+        qaSecret.forall(_.length >= 32),
+        (),
+        new IllegalArgumentException("PARROT_QA_WORKER_SECRET must contain at least 32 characters")
+      )
     } yield AppConfig(
       environment = environment,
       httpPort = port,
@@ -83,7 +90,8 @@ object AppConfig {
       resendApiKey = resendApiKey,
       resendFrom = resendFrom,
       publicBaseUrl = publicBaseUrl,
-      locationIqApiKey = nonEmpty(env, "LOCATIONIQ_API_KEY")
+      locationIqApiKey = nonEmpty(env, "LOCATIONIQ_API_KEY"),
+      qaWorkerSecret = qaSecret
     )
   }
 }

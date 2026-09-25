@@ -45,6 +45,10 @@ final class AuthRepository[F[_]: Async](xa: Transactor[F]) {
       where lower(btrim(username)) = lower(btrim($username))
     """.query[AccountRecord].option.transact(xa)
 
+  def isQaOriginAllowed(accountId: UUID): F[Boolean] =
+    sql"select exists(select 1 from qa_origin_account_allowlist where account_id = $accountId)"
+      .query[Boolean].unique.transact(xa)
+
   def deleteUnusedEmailVerificationTokens(accountId: UUID): F[Unit] =
     sql"""
       delete from email_verification_tokens
