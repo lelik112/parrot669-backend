@@ -156,25 +156,35 @@ class MessagingSuite extends munit.FunSuite {
     }
   }
 
-  test("host opts in to new threads; existing conversations work after opting out, without roles or listings") {
+  test("every property allows first contact even with a legacy opt-out; auth and existing conversations still work") {
     withDb { f =>
       for {
+        _ <- sql"insert into messaging_settings (profile_id, accepting_new_conversations) values (${f.host.id}, false)"
+          .update.run.transact(f.xa)
         options <- f.request(Method.GET, s"/contact-options/${f.property}", None).flatMap(_.as[ContactOptions])
-        _ = assert(!options.acceptingNewConversations)
-        disabled <- f.service.start(f.guest.id, StartConversationRequest(f.property.toString, UUID.randomUUID().toString, "Hello"))
-        _ = assert(disabled.left.toOption.exists(_.isInstanceOf[ServiceError.Conflict]))
-        response <- f.request(Method.PUT, "/settings", Some(f.host), Some(MessagingSettings(true).asJson))
+        _ = assert(options.acceptingNewConversations)
+        unauthenticated <- f.request(Method.POST, "/conversations", None,
+          Some(StartConversationRequest(f.property.toString, UUID.randomUUID().toString, "Hello").asJson))
+        _ = assertEquals(unauthenticated.status, Status.Unauthorized)
+        _ <- sql"update accounts set email_verified = false where id = (select account_id from profiles where id = ${f.stranger.id})"
+          .update.run.transact(f.xa)
+        unverified <- f.request(Method.POST, "/conversations", Some(f.stranger),
+          Some(StartConversationRequest(f.property.toString, UUID.randomUUID().toString, "Hello").asJson))
+        _ = assertEquals(unverified.status, Status.Unauthorized)
+        _ <- sql"update accounts set email_verified = true where id = (select account_id from profiles where id = ${f.stranger.id})"
+          .update.run.transact(f.xa)
+        response <- f.request(Method.PUT, "/settings", Some(f.host), Some(MessagingSettings(false).asJson))
         _ = assertEquals(response.status, Status.Ok)
+        current <- response.as[MessagingSettings]
+        _ = assert(current.acceptingNewConversations)
         self <- f.service.start(f.host.id, StartConversationRequest(f.property.toString, UUID.randomUUID().toString, "Self"))
         _ = assert(self.left.toOption.exists(_.isInstanceOf[ServiceError.Invalid]))
         c <- f.start()
-        _ <- f.service.updateSettings(f.host.id, MessagingSettings(false))
         continued <- f.start("Follow-up")
         _ = assertEquals(continued.conversationId, c.conversationId)
-        stranger <- f.service.start(f.stranger.id, StartConversationRequest(f.property.toString, UUID.randomUUID().toString, "New"))
-        _ = assert(stranger.left.toOption.exists(_.isInstanceOf[ServiceError.Conflict]))
+        stranger <- f.start("New", actor = f.stranger)
+        _ = assertNotEquals(stranger.conversationId, c.conversationId)
         guestProperty <- f.propertyFor(f.guest)
-        _ <- f.service.updateSettings(f.guest.id, MessagingSettings(true))
         reverse <- f.start(propertyId = guestProperty, actor = f.host)
         _ = assertNotEquals(reverse.conversationId, c.conversationId)
       } yield ()
@@ -377,7 +387,7 @@ class MessagingSuite extends munit.FunSuite {
     }
   }
 
-  test("email preferences are private and independent of host opt-in; validate all supported languages") {
+  test("email preferences stay private and independent of legacy contact settings; validate supported languages") {
     withDb { f =>
       for {
         initial <- f.request(Method.GET, "/notification-settings", Some(f.guest)).flatMap(_.as[EmailNotificationSettings])
@@ -388,6 +398,8 @@ class MessagingSuite extends munit.FunSuite {
         host <- f.service.settings(f.host.id)
         _ = assert(host.acceptingNewConversations)
         _ <- f.service.updateSettings(f.host.id, MessagingSettings(false))
+        stillAvailable <- f.service.settings(f.host.id)
+        _ = assert(stillAvailable.acceptingNewConversations)
         retained <- f.service.emailSettings(f.host.id)
         _ = assertEquals(retained, EmailNotificationSettings(false, "ru"))
         guest <- f.service.emailSettings(f.guest.id)

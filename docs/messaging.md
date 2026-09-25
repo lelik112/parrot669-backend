@@ -38,9 +38,9 @@ with the same cookie forwarding and Origin protection used by `/api/host/*`.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/contact-options/:propertyId` | `{propertyId, acceptingNewConversations, propertyTitle, hostProfileId, hostDisplayName}`; public labels only |
-| GET / PUT | `/settings` | Read/set `{acceptingNewConversations: boolean}` for the signed-in profile |
-| GET / PUT | `/notification-settings` | Read/set own `{enabled: boolean, language: "en"\|"es"\|"ca"\|"ru"}`; independent of host opt-in |
+| GET | `/contact-options/:propertyId` | `{propertyId, acceptingNewConversations, propertyTitle, hostProfileId, hostDisplayName}`; compatibility field `acceptingNewConversations` is always true; public labels only |
+| GET / PUT | `/settings` | Deprecated compatibility route; always returns `{acceptingNewConversations: true}`. PUT cannot disable contact |
+| GET / PUT | `/notification-settings` | Read/set own `{enabled: boolean, language: "en"\|"es"\|"ca"\|"ru"}`; independent of contact availability |
 | POST | `/conversations` | Start/reuse a conversation and atomically save its first/new message |
 | GET | `/conversations?limit=20&cursor=...` | Inbox, newest activity first; `{items, nextCursor}` |
 | GET | `/conversations/:id` | Participant-only conversation metadata and unread count |
@@ -52,6 +52,11 @@ with the same cookie forwarding and Origin protection used by `/api/host/*`.
 | GET | `/unread` | `{conversations, messages}` counts across all participant threads |
 
 Starting a conversation:
+
+The first message is allowed for every existing property, including one whose host
+previously disabled the general messaging switch. Sign-in with verified email,
+per-sender rate limits and participant-pair blocks still apply. The legacy switch
+is no longer shown in the host UI; its stored value has no effect on new threads.
 
 ```json
 {

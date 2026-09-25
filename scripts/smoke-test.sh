@@ -137,7 +137,7 @@ messaging_settings_json=$(curl --fail --silent -b "$COOKIE_JAR" "http://localhos
 messaging_unread_json=$(curl --fail --silent -b "$COOKIE_JAR" "http://localhost:$HTTP_PORT/api/messaging/unread")
 MESSAGING_SETTINGS_JSON="$messaging_settings_json" MESSAGING_UNREAD_JSON="$messaging_unread_json" python3 - <<'PY'
 import json, os
-assert json.loads(os.environ["MESSAGING_SETTINGS_JSON"]) == {"acceptingNewConversations": False}
+assert json.loads(os.environ["MESSAGING_SETTINGS_JSON"]) == {"acceptingNewConversations": True}
 assert json.loads(os.environ["MESSAGING_UNREAD_JSON"]) == {"conversations": 0, "messages": 0}
 print("Isolated messaging routes are composed into the authenticated application")
 PY
