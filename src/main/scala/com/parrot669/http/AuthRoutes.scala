@@ -10,7 +10,11 @@ import org.http4s.circe.CirceEntityCodec._
 import org.http4s.dsl.Http4sDsl
 import org.typelevel.ci.CIStringSyntax
 
-final class AuthRoutes[F[_]: Async](authService: AuthService[F], secureCookies: Boolean) extends Http4sDsl[F] {
+final class AuthRoutes[F[_]: Async](
+    authService: AuthService[F],
+    secureCookies: Boolean,
+    qaOrigin: Option[QaOriginGuard[F]] = None
+) extends Http4sDsl[F] {
   private val sessionCookieName = "parrot_session"
   private val sessionMaxAgeSeconds = 30L * 24L * 60L * 60L
 
@@ -57,7 +61,9 @@ final class AuthRoutes[F[_]: Async](authService: AuthService[F], secureCookies: 
 
     case request @ POST -> Root / "api" / "auth" / "login" =>
       decode[LoginRequest](request) { body =>
-        authService.login(body).flatMap {
+        val login = if (qaOrigin.exists(_.isQaOrigin(request))) authService.loginForQaOrigin(body)
+                    else authService.login(body)
+        login.flatMap {
           case Right(result) =>
             Ok(result.user).map(_.putHeaders(sessionCookie(result.sessionToken)))
           case Left(error) =>

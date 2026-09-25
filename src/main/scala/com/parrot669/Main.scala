@@ -7,7 +7,7 @@ import com.parrot669.config.AppConfig
 import com.parrot669.db.Database
 import com.parrot669.calendarverification.{CalendarVerificationRepository, CalendarVerificationRoutes, CalendarVerificationService}
 import com.parrot669.externalcalendar.{CalendarRepository, CalendarRoutes, CalendarService}
-import com.parrot669.http.{AuthRoutes, Routes}
+import com.parrot669.http.{AuthRoutes, QaOriginGuard, Routes}
 import com.parrot669.housing.{AvailabilityRoutes, AvailabilityService, DoobieAvailabilityRepository}
 import com.parrot669.http.PasswordResetRoutes
 import com.parrot669.housing.{PropertyRepository, PropertyRoutes, PropertyService}
@@ -62,6 +62,7 @@ object Main extends IOApp.Simple {
               .getOrElse(EmailSender.unconfigured[IO])
         emailVerificationService = new EmailVerificationService[IO](authRepo, emailSender)
         authService = new AuthService[IO](authRepo, emailVerificationService)
+        qaOrigin = new QaOriginGuard[IO](config.qaWorkerSecret, authService.authenticate, authRepo.isQaOriginAllowed)
         recoverySender = if (config.environment == "test") PasswordResetEmailSender.noop[IO]
           else PasswordResetEmailSender.resend[IO](config.resendApiKey.getOrElse(""), config.resendFrom, config.publicBaseUrl)
         recovery <- PasswordResetService.resource[IO](new PasswordResetRepository[IO](xa), recoverySender, authService)
@@ -73,7 +74,7 @@ object Main extends IOApp.Simple {
           authService,
           geocodingService,
           config.adminToken
-        ).routes <+> new AuthRoutes[IO](authService, secureCookies = config.environment == "prod").routes <+>
+        ).routes <+> new AuthRoutes[IO](authService, secureCookies = config.environment == "prod", qaOrigin = Some(qaOrigin)).routes <+>
           new CalendarRoutes[IO](calendarService, authService).routes <+>
           new ProfileRoutes[IO](profiles, authService.authenticate).routes <+>
           new SearchRoutes[IO](search).routes <+>
@@ -86,7 +87,7 @@ object Main extends IOApp.Simple {
           .default[IO]
           .withHost(host)
           .withPort(port)
-          .withHttpApp(routes.orNotFound)
+          .withHttpApp(qaOrigin(routes.orNotFound))
           .build
         _ <- Resource.make(calendarSyncLoop(calendarService).start)(_.cancel)
         _ <- Resource.make(calendarVerification.run.start)(_.cancel)

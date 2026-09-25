@@ -228,7 +228,16 @@ final class AuthService[F[_]: Async](
         }
     }
 
-  def login(req: LoginRequest): F[Either[ServiceError, AuthResult]] = {
+  def login(req: LoginRequest): F[Either[ServiceError, AuthResult]] =
+    loginWithAccess(req, _ => Async[F].pure(true))
+
+  def loginForQaOrigin(req: LoginRequest): F[Either[ServiceError, AuthResult]] =
+    loginWithAccess(req, repo.isQaOriginAllowed)
+
+  private def loginWithAccess(
+      req: LoginRequest,
+      allowed: UUID => F[Boolean]
+  ): F[Either[ServiceError, AuthResult]] = {
     val identifier = normalized(req.login.orElse(req.email).getOrElse(""))
     val emailLogin = identifier.contains("@")
     val identifierKey = "identifier:" + identifier.toLowerCase(Locale.ROOT)
@@ -261,18 +270,21 @@ final class AuthService[F[_]: Async](
               Async[F].delay(clearLoginFailures(key)) *>
                 Async[F].pure(Left(Unauthorized("email verification required")))
 
-            case true =>
-              for {
-                _ <- Async[F].delay(clearLoginFailures(key))
-                _ <- now.flatMap(repo.deleteExpiredSessions)
-                session <- newSession(account.id)
-                inserted <- repo.createSessionIfPasswordCurrent(session._2, account.passwordHash)
-                context <- if (inserted) repo.authContextForAccount(account.id) else Async[F].pure(None)
-              } yield context match {
-                case Some(value) => Right(AuthResult(toUser(value), session._1))
-                case None => Left(invalidCredentials)
+            case true => allowed(account.id).flatMap {
+              case false => Async[F].pure(Left(invalidCredentials))
+              case true =>
+                for {
+                  _ <- Async[F].delay(clearLoginFailures(key))
+                  _ <- now.flatMap(repo.deleteExpiredSessions)
+                  session <- newSession(account.id)
+                  inserted <- repo.createSessionIfPasswordCurrent(session._2, account.passwordHash)
+                  context <- if (inserted) repo.authContextForAccount(account.id) else Async[F].pure(None)
+                } yield context match {
+                  case Some(value) => Right(AuthResult(toUser(value), session._1))
+                  case None => Left(invalidCredentials)
+                }
               }
-          }
+            }
       }
     }
   }

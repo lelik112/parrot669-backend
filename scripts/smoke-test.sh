@@ -7,8 +7,9 @@ set -euo pipefail
 : "${PARROT_ADMIN_TOKEN:=ci-admin-token}"
 : "${HTTP_PORT:=8080}"
 : "${APP_ENV:=test}"
+: "${PARROT_QA_WORKER_SECRET:=ci-only-qa-worker-secret-at-least-32-characters}"
 
-export DATABASE_URL DATABASE_USER DATABASE_PASSWORD PARROT_ADMIN_TOKEN HTTP_PORT APP_ENV
+export DATABASE_URL DATABASE_USER DATABASE_PASSWORD PARROT_ADMIN_TOKEN HTTP_PORT APP_ENV PARROT_QA_WORKER_SECRET
 
 # Run the username/session integration tests against isolated test schemas.
 TEST_DATABASE_URL="$DATABASE_URL" TEST_DATABASE_USER="$DATABASE_USER" \
@@ -17,6 +18,7 @@ TEST_DATABASE_URL="$DATABASE_URL" TEST_DATABASE_USER="$DATABASE_USER" \
 LOG_FILE="${TMPDIR:-/tmp}/parrot669-smoke.log"
 COOKIE_JAR=$(mktemp)
 OTHER_COOKIE_JAR=$(mktemp)
+QA_COOKIE_JAR=$(mktemp)
 ICAL_DIR=$(mktemp -d)
 mkdir -p "$ICAL_DIR/calendar/ical"
 cat >"$ICAL_DIR/calendar/ical/123456789.ics" <<'ICS'
@@ -50,7 +52,7 @@ cleanup() {
   kill "$SERVER_PID" 2>/dev/null || true
   kill "$ICAL_SERVER_PID" 2>/dev/null || true
   rm -rf "$ICAL_DIR"
-  rm -f "$COOKIE_JAR" "$OTHER_COOKIE_JAR"
+  rm -f "$COOKIE_JAR" "$OTHER_COOKIE_JAR" "$QA_COOKIE_JAR"
   pkill -f 'com.parrot669.Main' 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -292,6 +294,47 @@ curl --fail --silent -c "$OTHER_COOKIE_JAR" -b "$OTHER_COOKIE_JAR" \
   -X POST "http://localhost:$HTTP_PORT/api/auth/verify-email" \
   -H 'content-type: application/json' \
   -d "{\"token\":\"$OTHER_VERIFY_TOKEN\"}" >/dev/null
+
+# PM-029: access is pinned to immutable IDs, never to a username in a request.
+# CI creates its accounts after Flyway, so explicitly enroll only the verified CI account.
+PGPASSWORD="$DATABASE_PASSWORD" psql -h localhost -p 5432 -U "$DATABASE_USER" -d parrot669 \
+  -v ON_ERROR_STOP=1 \
+  -c "insert into qa_origin_account_allowlist (account_id) select id from accounts where email_normalized = 'ci@example.com' and email_verified = true" >/dev/null
+
+qa_header=(-H 'X-Parrot-QA-Origin: qa' -H "X-Parrot-QA-Worker: $PARROT_QA_WORKER_SECRET")
+qa_login=$(curl --silent --output /dev/null --write-out '%{http_code}' -c "$QA_COOKIE_JAR" \
+  "${qa_header[@]}" -H 'content-type: application/json' \
+  -X POST "http://localhost:$HTTP_PORT/api/auth/login" \
+  -d "{\"email\":\"ci@example.com\",\"password\":\"$AUTH_TEST_PASSWORD\"}")
+test "$qa_login" = "200"
+qa_me=$(curl --silent --output /dev/null --write-out '%{http_code}' -b "$QA_COOKIE_JAR" \
+  "${qa_header[@]}" "http://localhost:$HTTP_PORT/api/auth/me")
+test "$qa_me" = "200"
+for path in /api/auth/me /api/search /api/messaging/unread /api/dashboard; do
+  status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    "${qa_header[@]}" "http://localhost:$HTTP_PORT$path")
+  test "$status" = "403"
+  status=$(curl --silent --output /dev/null --write-out '%{http_code}' -b "$OTHER_COOKIE_JAR" \
+    "${qa_header[@]}" "http://localhost:$HTTP_PORT$path")
+  test "$status" = "403"
+done
+for path in /api/auth/register /api/auth/verify-email /api/auth/password-reset/request; do
+  status=$(curl --silent --output /dev/null --write-out '%{http_code}' -b "$QA_COOKIE_JAR" \
+    "${qa_header[@]}" -H 'content-type: application/json' \
+    -X POST "http://localhost:$HTTP_PORT$path" -d '{}')
+  test "$status" = "403"
+done
+other_qa_login=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  "${qa_header[@]}" -H 'content-type: application/json' \
+  -X POST "http://localhost:$HTTP_PORT/api/auth/login" \
+  -d '{"email":"other@example.com","password":"other-ci-password-12345"}')
+test "$other_qa_login" = "401"
+for value in 'X-Parrot-QA-Origin: qa' 'X-Parrot-QA-Worker: invalid-secret'; do
+  status=$(curl --silent --output /dev/null --write-out '%{http_code}' -b "$QA_COOKIE_JAR" \
+    -H "$value" "http://localhost:$HTTP_PORT/api/auth/me")
+  test "$status" = "403"
+done
+echo "QA origin account-ID allowlist, attestation, public and private API boundaries passed"
 
 other_owner_update_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
   -b "$OTHER_COOKIE_JAR" \
