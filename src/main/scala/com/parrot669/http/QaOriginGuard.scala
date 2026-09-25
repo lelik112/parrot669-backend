@@ -44,6 +44,11 @@ final class QaOriginGuard[F[_]: Async](
     Forbidden(ErrorResponse("Forbidden"))
       .map(_.putHeaders(Header.Raw(ci"Cache-Control", "no-store")))
 
+  private def unauthenticated: F[Response[F]] =
+    Async[F].pure(Response[F](status = Status.Unauthorized)
+      .withEntity(ErrorResponse("authentication required"))
+      .putHeaders(Header.Raw(ci"Cache-Control", "no-store")))
+
   def apply(app: HttpApp[F]): HttpApp[F] = Kleisli { request: Request[F] =>
     val origin = header(request, originHeader)
     val secret = header(request, secretHeader)
@@ -61,7 +66,7 @@ final class QaOriginGuard[F[_]: Async](
           case true => app(request)
           case false => forbidden
         }
-      case Left(_) => forbidden
+      case Left(_) => unauthenticated
     }
   }
 }

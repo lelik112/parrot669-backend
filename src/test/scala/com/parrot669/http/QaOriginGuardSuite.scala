@@ -40,7 +40,9 @@ class QaOriginGuardSuite extends munit.FunSuite {
 
   test("QA APIs refuse anonymous and other accounts, including public routes and writes") {
     val checks = List(
-      request("/api/search") -> Status.Forbidden,
+      request("/api/search") -> Status.Unauthorized,
+      request("/api/auth/me") -> Status.Unauthorized,
+      request("/api/messaging/conversations", Some("expired-token")) -> Status.Unauthorized,
       request("/api/auth/me", Some("other-token")) -> Status.Forbidden,
       request("/api/messaging/conversations", Some("other-token")) -> Status.Forbidden,
       request("/api/properties", Some("other-token"), method = Method.POST) -> Status.Forbidden,
