@@ -146,6 +146,38 @@ class SearchSuite extends munit.FunSuite {
     assertEquals(repo.queries, Vector(Query("ES", "Barcelona", from, to, 1, 1, 3, None, false)))
   }
 
+  test("PM-037: 1 through 366 nights reach the repository without changing dates") {
+    val repo = new StubRepository()
+    val start = LocalDate.parse("2028-01-01")
+    List(1, 7, 30, 90, 366).foreach { nights =>
+      val end = start.plusDays(nights.toLong)
+      assertEquals(get(repo, s"/api/search?country=ES&city=Barcelona&from=$start&to=$end"),
+        (Status.Ok, Json.arr()))
+      assertEquals(repo.queries.last, Query("ES", "Barcelona", start, end, 1, 1, nights, None, false))
+    }
+  }
+
+  test("PM-037: long, zero, reverse, malformed and extreme dates return 400 without any repository call") {
+    val repo = new StubRepository()
+    val cases = List(
+      ("2028-01-01", "2029-01-02", "A search request can cover at most 366 nights"),
+      ("0001-01-01", "9999-12-31", "A search request can cover at most 366 nights"),
+      ("2028-01-01", "2028-01-01", "to must be after from; checkout date is exclusive"),
+      ("2028-01-02", "2028-01-01", "to must be after from; checkout date is exclusive"),
+      ("2027-02-29", "2028-01-01", "from must be YYYY-MM-DD"),
+      ("2028-01-01", "2028-02-30", "to must be YYYY-MM-DD"),
+      ("0000-01-01", "0001-01-01", "from must be YYYY-MM-DD"),
+      ("-999999999-01-01", "9999-12-31", "from must be YYYY-MM-DD"),
+      ("2028-01-01", "%2B999999999-12-31", "to must be YYYY-MM-DD"),
+      ("%2B294277-01-01", "%2B294277-01-02", "from must be YYYY-MM-DD")
+    )
+    cases.foreach { case (start, end, error) =>
+      assertEquals(get(repo, s"/api/search?country=ES&city=Barcelona&from=$start&to=$end"),
+        (Status.BadRequest, Json.obj("error" -> Json.fromString(error))))
+    }
+    assertEquals(repo.calls, Vector.empty[String])
+  }
+
   test("database location routes retain their JSON and country validation") {
     val repo = new StubRepository()
     assertEquals(get(repo, "/api/locations/countries"), (Status.Ok,

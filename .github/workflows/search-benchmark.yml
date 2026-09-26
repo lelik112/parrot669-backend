@@ -1,0 +1,66 @@
+name: Search benchmark
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.github/workflows/search-benchmark.yml'
+      - 'scripts/search-benchmark.py'
+      - 'src/main/scala/com/parrot669/search/**'
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-search:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: parrot_search_benchmark
+          POSTGRES_USER: parrot
+          POSTGRES_PASSWORD: parrot
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U parrot -d parrot_search_benchmark"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      APP_ENV: test
+      HTTP_PORT: '8080'
+      PGHOST: localhost
+      PGPORT: '5432'
+      PGDATABASE: parrot_search_benchmark
+      PGUSER: parrot
+      PGPASSWORD: parrot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: sbt
+      - uses: sbt/setup-sbt@v1
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Build
+        run: sbt -batch assembly
+      - name: Measure isolated full HTTP search and actual SQL
+        run: |
+          mkdir -p benchmark-results
+          java -jar target/scala-2.13/parrot669-backend.jar >benchmark-results/server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" || true' EXIT
+          for i in $(seq 1 90); do
+            if curl -fsS http://localhost:8080/health >/dev/null; then break; fi
+            sleep 1
+          done
+          curl -fsS http://localhost:8080/health
+          python3 scripts/search-benchmark.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: search-benchmark-${{ github.sha }}
+          path: benchmark-results/
