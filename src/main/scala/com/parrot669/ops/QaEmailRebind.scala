@@ -312,8 +312,10 @@ private[ops] object QaEmailRebind {
   }
 
   def execute(connection: Connection, mode: String, batch: String, targets: Option[QaEmailTargets]): Unit = {
-    connection.setAutoCommit(false)
+    require(connection.getAutoCommit, "QA email operation requires a clean auto-commit connection")
+    val originalIsolation = connection.getTransactionIsolation
     connection.setTransactionIsolation(Connection.TRANSACTION_SERIALIZABLE)
+    connection.setAutoCommit(false)
     try {
       ensureBackupTable(connection)
       mode match {
@@ -327,6 +329,9 @@ private[ops] object QaEmailRebind {
       case error: Throwable =>
         connection.rollback()
         throw error
+    } finally {
+      connection.setAutoCommit(true)
+      connection.setTransactionIsolation(originalIsolation)
     }
   }
 }
